@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polymarket Bot · Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- Animated background effect -->
+<div class="bg-glow"></div>
+<div class="bg-grid"></div>
+
+<div class="stale-bar" id="stale-bar">
+  <span class="pulse-warning"></span>
+  ⚠ Showing cached data — refreshing in the background…
+</div>
+
+<header class="hdr" id="hdr">
+  <div class="hdr-left">
+    <div class="live-dot" id="hdr-dot"></div>
+    <span class="hdr-logo">POLYMARKET <span class="accent-text">BOT</span></span>
+    <div class="mode-tabs">
+      <button class="mtab"        id="mode-paper" onclick="setMode('paper')">Paper</button>
+      <button class="mtab live active" id="mode-live"  onclick="setMode('live')">Live</button>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <div class="ts-wrap">
+      <span class="ts" id="ts">—</span>
+      <span class="ts-age" id="ts-age">—</span>
+    </div>
+    <div class="hdr-actions">
+      <button id="btn-scan" class="hbtn hbtn-scan" onclick="runCmd('scan')">
+        <span id="scan-icon" class="btn-icon">⚡</span> Scan
+      </button>
+      <button id="btn-resolve" class="hbtn hbtn-resolve" onclick="runCmd('resolve')">
+        <span id="resolve-icon" class="btn-icon">✓</span> Resolve
+      </button>
+      <button class="hbtn hbtn-glass" id="btn-refresh" onclick="load(true)">
+        <span id="refresh-icon" class="btn-icon">↻</span> Refresh
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="data-mode-banner" id="data-mode-banner">
+  <span id="data-mode-text">Data source: —</span>
+</div>
+
+<!-- Modal -->
+<div class="overlay" id="overlay" onclick="maybeClose(event)">
+  <div class="modal">
+    <div class="m-head">
+      <div class="m-top">
+        <span class="m-title" id="m-title">—</span>
+        <button class="m-x" onclick="closeModal()">✕</button>
+      </div>
+      <div class="m-stats">
+        <div class="m-stat"><span class="m-stat-lbl">Direction</span><span class="m-stat-val" id="m-dir">—</span></div>
+        <div class="m-stat"><span class="m-stat-lbl">Entry</span><span class="m-stat-val mono" id="m-entry">—</span></div>
+        <div class="m-stat"><span class="m-stat-lbl">Size</span><span class="m-stat-val mono" id="m-size">—</span></div>
+        <div class="m-stat"><span class="m-stat-lbl">Model</span><span class="m-stat-val mono" id="m-model">—</span></div>
+        <div class="m-stat"><span class="m-stat-lbl">Edge</span><span class="m-stat-val mono" id="m-edge">—</span></div>
+        <div class="m-stat"><span class="m-stat-lbl">Current</span><span class="m-stat-val mono" id="m-current">—</span></div>
+      </div>
+    </div>
+    <div class="m-chart">
+      <div class="m-chart-lbl">YES Price History — Polymarket CLOB</div>
+      <div class="chart-wrap">
+        <div class="chart-load" id="chart-load">
+          <div class="spin-neon"></div>
+          <span>Decrypting feed...</span>
+        </div>
+        <canvas id="price-chart" style="display:none"></canvas>
+      </div>
+    </div>
+    <div class="m-foot">
+      <a id="m-pm-link" href="#" target="_blank" class="btn btn-primary">Polymarket ↗</a>
+      <button onclick="closeModal()" class="btn btn-sec">Close</button>
+    </div>
+  </div>
+</div>
+
+<main class="page">
+  <div class="hero-grid" id="hero-grid">
+    <div class="hero-card slide-up" style="animation-delay: 0.05s"><div class="sk" style="height:86px"></div></div>
+    <div class="hero-card slide-up" style="animation-delay: 0.1s"><div class="sk" style="height:86px"></div></div>
+    <div class="hero-card slide-up" style="animation-delay: 0.15s"><div class="sk" style="height:86px"></div></div>
+  </div>
+  
+  <div class="pills slide-up" id="pills" style="animation-delay: 0.2s">
+    <div class="pill"><div class="sk" style="height:44px"></div></div>
+    <div class="pill"><div class="sk" style="height:44px"></div></div>
+    <div class="pill"><div class="sk" style="height:44px"></div></div>
+    <div class="pill"><div class="sk" style="height:44px"></div></div>
+    <div class="pill"><div class="sk" style="height:44px"></div></div>
+    <div class="pill"><div class="sk" style="height:44px"></div></div>
+  </div>
+  
+  <div class="grid2">
+    <div class="card slide-up" id="pos-card" style="animation-delay: 0.25s">
+      <div class="card-hdr">
+        <span class="card-title glow-text">Open Positions</span>
+      </div>
+      <div class="sk" style="height:180px;border-radius:0"></div>
+    </div>
+    <div class="card slide-up" id="exp-card" style="animation-delay: 0.3s">
+      <div class="card-hdr">
+        <span class="card-title glow-text">Exposure</span>
+      </div>
+      <div class="sk" style="height:180px;border-radius:0"></div>
+    </div>
+  </div>
+  
+  <div class="grid2">
+    <div class="card slide-up" id="hist-card" style="animation-delay: 0.35s">
+      <div class="card-hdr"><span class="card-title glow-text">Trade History</span></div>
+      <div class="sk" style="height:200px;border-radius:0"></div>
+    </div>
+    <div class="card slide-up" id="stn-card" style="animation-delay: 0.4s">
+      <div class="card-hdr"><span class="card-title glow-text">Stations</span></div>
+      <div class="sk" style="height:200px;border-radius:0"></div>
+    </div>
+  </div>
+  <div class="card slide-up" id="ops-card" style="animation-delay: 0.45s">
+    <div class="card-hdr"><span class="card-title glow-text">Ops</span></div>
+    <div class="sk" style="height:140px;border-radius:0"></div>
+  </div>
+</main>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

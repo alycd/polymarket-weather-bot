@@ -1,0 +1,43 @@
+# === SECRETS — NEVER COMMIT ===
+.env
+*.pem
+*.key
+
+# === DATABASES (contain trading history / PII) ===
+*.db
+*.db-shm
+*.db-wal
+
+# === LARGE DATA FILES ===
+backtest_results.csv
+real_backtest_results.csv
+*.csv
+
+# === PYTHON ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === LOGS & RUNTIME STATE ===
+logs/
+*.log
+.locks/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
