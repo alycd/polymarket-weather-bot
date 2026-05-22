@@ -206,6 +206,10 @@ def fetch_temperature_markets() -> list[dict]:
             },
             timeout=20,
         )
+        if resp.status_code == 422:
+            # API hard cap on offset reached — treat as end of results
+            logger.debug("Gamma API offset cap hit at offset=%d, stopping pagination", offset)
+            break
         resp.raise_for_status()
         data = resp.json()
         if not data:
