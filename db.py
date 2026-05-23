@@ -127,7 +127,8 @@ CREATE TABLE IF NOT EXISTS trades (
     actual_high_c   REAL,
     pnl             REAL,
     resolved_at     TEXT,
-    notes           TEXT DEFAULT ''
+    notes           TEXT DEFAULT '',
+    clob_token_yes  TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS daily_pnl (
@@ -266,6 +267,10 @@ def init_db():
             conn.execute("ALTER TABLE trades ADD COLUMN bankroll_fix_applied INTEGER DEFAULT 0")
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN clob_token_yes TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
         fixed = conn.execute(
             "SELECT COUNT(*) as c FROM trades WHERE status='lost' AND bankroll_fix_applied=0"
         ).fetchone()["c"]
