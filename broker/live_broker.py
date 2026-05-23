@@ -22,6 +22,7 @@ import os
 import logging
 import time
 from dotenv import load_dotenv
+from telegram import send_telegram_notification
 
 load_dotenv()
 
@@ -251,6 +252,12 @@ def execute_live_trade(
 
     logger.info("ORDER SUBMITTED %s | order_id=%s status=%s",
                 log_prefix, order_id[:12] if order_id else "?", status)
+    send_telegram_notification(
+        "LIVE-TRADE",
+        f"{direction} | {market.get('city')} {market.get('target_date')} | "
+        f"bucket=[{market.get('bucket_lo')},{market.get('bucket_hi')}]{market.get('bucket_unit','C')} | "
+        f"entry={order_price:.3f} edge={signal['edge']:+.3f} | ${size_usdc:.2f} | order={order_id[:12] if order_id else '?'}",
+    )
 
     # Poll for fill (GTC orders may sit on the book)
     filled_price = order_price  # assume passive fill at limit price

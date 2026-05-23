@@ -8,6 +8,7 @@ from datetime import datetime
 from config import CITIES, MAX_DEPLOYED_FRACTION
 import db
 from data.polymarket import get_market_prices
+from telegram import send_telegram_notification
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,12 @@ def execute_paper_trade(
 
     db.log_event("TRADE_OPENED", log_msg, city=city, icao=icao, data=signal)
     logger.info("%s", log_msg)
+    send_telegram_notification(
+        "PAPER-TRADE",
+        f"{signal['direction']} | {city} {market.get('target_date')} | "
+        f"bucket=[{market.get('bucket_lo')},{market.get('bucket_hi')}]{market.get('bucket_unit','C')} | "
+        f"entry={entry_price:.3f} edge={signal['edge']:+.3f} | ${size:.2f}",
+    )
 
     return {
         "trade_id":    trade_id,
