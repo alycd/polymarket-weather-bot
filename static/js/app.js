@@ -158,12 +158,12 @@ function renderPositions(pos) {
       const mkt = (p.model_prob != null) ? (p.model_prob * 100).toFixed(1) + '%' : '—';
       const pnl = p.edge;
       return `<tr class="${p.clob_token_yes?'row-click':''} slide-up" style="animation-delay: ${i*0.03}s" data-id="${p.trade_id}">
-        <td class="fw6" style="max-width:220px;white-space:normal;line-height:1.25">${(p.city||'').slice(0,120)}</td>
-        <td class="mono md">${p.target_date||'—'}</td>
+        <td class="fw6 wrap-cell">${(p.city||'').slice(0,120)}</td>
+        <td class="mono md hide-xs">${p.target_date||'—'}</td>
         <td>${side}</td>
-        <td class="tr mono">${ep}</td>
+        <td class="tr mono hide-xs">${ep}</td>
+        <td class="tr mono md hide-xs">${mkt}</td>
         <td class="tr mono fw6">${p.size_usdc>0?'$'+p.size_usdc.toFixed(2):'<span class="md">—</span>'}</td>
-        <td class="tr mono md">${mkt}</td>
         <td class="tr mono ${eClass(pnl)}">${pnl>=0?'+$':'-$'}${Math.abs(pnl).toFixed(2)}</td>
       </tr>`;
     }
@@ -173,24 +173,28 @@ function renderPositions(pos) {
       ? `<span class="${pClass(p.unreal_pnl)}">${p.unreal_pnl>=0?'+$':'-$'}${Math.abs(p.unreal_pnl).toFixed(2)}</span>`
       : '<span class="md">—</span>';
     return `<tr class="${p.clob_token_yes?'row-click':''} slide-up" style="animation-delay: ${i*0.03}s" data-id="${p.trade_id}">
-      <td class="fw6">${p.city}</td>
-      <td class="mono md">${p.target_date}</td>
-      <td>${dir} <span class="mono md" style="font-size:11px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span></td>
-      <td class="tr mono">${(p.entry_price*100).toFixed(1)}¢</td>
-      <td class="tr mono">${nowStr}</td>
+      <td class="fw6 wrap-cell">${p.city}</td>
+      <td class="mono md hide-xs">${p.target_date}</td>
+      <td>${dir} <span class="mono md hide-xs" style="font-size:11px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span></td>
+      <td class="tr mono hide-xs">${(p.entry_price*100).toFixed(1)}¢</td>
+      <td class="tr mono hide-xs">${nowStr}</td>
       <td class="tr mono fw6">${p.size_usdc>0?'$'+p.size_usdc.toFixed(2):'<span class="md">—</span>'}</td>
       <td class="tr mono fw6">${upnlStr}</td>
     </tr>`;
   }).join('');
+  const pnlSum = pm
+    ? pos.reduce((s, p) => s + (p.edge || 0), 0)
+    : pos.reduce((s, p) => s + (p.unreal_pnl || 0), 0);
+  const pnlSumStr = `<span class="pos-pnl-sum mono ${pClass(pnlSum)}">${pnlSum >= 0 ? '+$' : '-$'}${Math.abs(pnlSum).toFixed(2)}</span>`;
   const thead = pm
-    ? '<thead><tr><th>Market</th><th>End</th><th>Side</th><th class="tr">Avg</th><th class="tr">Value</th><th class="tr">Mkt</th><th class="tr">PnL</th></tr></thead>'
-    : '<thead><tr><th>City</th><th>Date</th><th>Bet</th><th class="tr">Entry</th><th class="tr">Now</th><th class="tr">Size</th><th class="tr">Unreal PnL</th></tr></thead>';
+    ? '<thead><tr><th>Market</th><th class="hide-xs">End</th><th>Side</th><th class="tr hide-xs">Avg</th><th class="tr hide-xs">Mkt%</th><th class="tr">Value</th><th class="tr">PnL</th></tr></thead>'
+    : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th class="tr hide-xs">Entry</th><th class="tr hide-xs">Now</th><th class="tr">Size</th><th class="tr">Unreal PnL</th></tr></thead>';
   card.innerHTML = `
     <div class="card-hdr">
       <span class="card-title glow-text">Open Positions <span class="card-badge">${pos.length}</span></span>
-      <span class="card-hint">${pm ? 'Polymarket API' : 'click row for chart'}</span>
+      <div class="card-hdr-right">${pnlSumStr}<span class="card-hint">${pm ? 'Polymarket API' : 'click row for chart'}</span></div>
     </div>
-    <div class="tbl-wrap"><table>
+    <div class="tbl-wrap"><table class="pos-tbl">
       ${thead}
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -248,8 +252,8 @@ function renderHistory(hist) {
       const res = t.status==='won' ? '<span class="badge b-won">WIN</span>' : '<span class="badge b-lost">LOSS</span>';
       const side = '<span class="badge b-yes">' + String(t.direction||'—').replace(/</g,'') + '</span>';
       return `<tr class="${t.clob_token_yes?'row-click':''} slide-up" style="animation-delay: ${i*0.03}s" data-id="${t.trade_id}">
-        <td class="fw6" style="max-width:220px;white-space:normal;line-height:1.25">${(t.city||'').slice(0,120)}</td>
-        <td class="mono md">${t.target_date||'—'}</td>
+        <td class="fw6 wrap-cell">${(t.city||'').slice(0,120)}</td>
+        <td class="mono md hide-xs">${t.target_date||'—'}</td>
         <td>${side}</td>
         <td>${res}</td>
         <td class="tr mono ${pClass(pnl)} fw6">${fmtSign$(pnl)}</td>
@@ -262,18 +266,18 @@ function renderHistory(hist) {
     const dir = t.direction==='YES' ? '<span class="badge b-yes">YES</span>' : '<span class="badge b-no">NO</span>';
     const actual = (t.actual_high_c!==null&&t.actual_high_c!==undefined) ? t.actual_high_c.toFixed(1)+'°C' : '—';
     return `<tr class="${t.clob_token_yes?'row-click':''} slide-up" style="animation-delay: ${i*0.03}s" data-id="${t.trade_id}">
-      <td class="fw6">${t.city}</td>
-      <td class="mono md">${t.target_date}</td>
-      <td>${dir} <span class="mono md" style="font-size:11px">${tempStr(t.bucket_lo,t.bucket_hi,t.bucket_unit)}</span></td>
+      <td class="fw6 wrap-cell">${t.city}</td>
+      <td class="mono md hide-xs">${t.target_date}</td>
+      <td>${dir} <span class="mono md hide-xs" style="font-size:11px">${tempStr(t.bucket_lo,t.bucket_hi,t.bucket_unit)}</span></td>
       <td>${res}</td>
       <td class="tr mono ${pClass(pnl)} fw6">${fmtSign$(pnl)}</td>
-      <td class="tr mono md">${actual}</td>
+      <td class="tr mono md hide-xs">${actual}</td>
     </tr>`;
   }).join('');
-  const histTitle = pm ? 'Closed (Polymarket)' : 'Trade History';
+  const histTitle = pm ? 'Completed Trades' : 'Trade History';
   const histThead = pm
-    ? '<thead><tr><th>Market</th><th>End</th><th>Side</th><th>Result</th><th class="tr">PnL</th></tr></thead>'
-    : '<thead><tr><th>City</th><th>Date</th><th>Bet</th><th>Result</th><th class="tr">PnL</th><th class="tr">Actual</th></tr></thead>';
+    ? '<thead><tr><th>Market</th><th class="hide-xs">End</th><th>Side</th><th>Result</th><th class="tr">PnL</th></tr></thead>'
+    : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th>Result</th><th class="tr">PnL</th><th class="tr hide-xs">Actual</th></tr></thead>';
   card.innerHTML = `
     <div class="card-hdr">
       <span class="card-title glow-text">${histTitle} <span class="card-badge">${hist.length}</span></span>
@@ -281,7 +285,7 @@ function renderHistory(hist) {
         ${hist.length > HISTORY_DEFAULT_LIMIT ? `<button class="link-btn" id="hist-toggle">${_historyExpanded ? 'Show less' : `Show all (${hist.length})`}</button>` : ''}
       </span>
     </div>
-    <div class="tbl-wrap"><table>
+    <div class="tbl-wrap"><table class="hist-tbl">
     ${histThead}
     <tbody>${rows}</tbody></table></div>`;
   const histToggle = document.getElementById('hist-toggle');
@@ -523,24 +527,6 @@ setInterval(() => {
   }
 }, 5000);
 
-// ── auto-refresh ──────────────────────────────────────────────────────────────
-var _timer = setInterval(() => load(false), REFRESH_INTERVAL);
-var _halfHourTimer = setInterval(() => {
-  load(true); // hard refresh to align with 30m risk-management cadence
-  if (_mode === 'live') refreshClobBalance();
-}, HALF_HOUR_SYNC_INTERVAL);
-document.addEventListener('visibilitychange', () => {
-  clearInterval(_timer);
-  clearInterval(_halfHourTimer);
-  if (!document.hidden) {
-    load(false);
-    _timer = setInterval(() => load(false), REFRESH_INTERVAL);
-    _halfHourTimer = setInterval(() => {
-      load(true);
-      if (_mode === 'live') refreshClobBalance();
-    }, HALF_HOUR_SYNC_INTERVAL);
-  }
-});
 
 // ── action buttons ────────────────────────────────────────────────────────────
 var _ICONS = {scan:'⚡', resolve:'✓'};
