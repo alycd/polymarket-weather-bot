@@ -213,6 +213,50 @@ def fetch_historical_actuals(lat: float, lon: float,
     return result
 
 
+def fetch_past_model_forecasts(model_name: str, lat: float, lon: float,
+                                timezone: str, past_days: int = 92) -> dict[str, float]:
+    """
+    Fetch what an NWP model predicted for each of the last `past_days` days
+    using the regular forecast API's past_days parameter.
+
+    Returns {date_str: predicted_high_c} for dates in the past.
+    Uses the same endpoint and model name as live forecasts — no separate API needed.
+    Suitable for bias backfill: these are real model outputs, not reanalysis.
+    """
+    url = OPENMETEO_MODELS[model_name]
+    params = {
+        "latitude":         lat,
+        "longitude":        lon,
+        "daily":            "temperature_2m_max",
+        "temperature_unit": "celsius",
+        "past_days":        past_days,
+        "forecast_days":    1,
+        "timezone":         timezone,
+    }
+    params.update(OPENMETEO_MODEL_PARAMS.get(model_name, {}))
+    try:
+        resp = _get_with_retry(url, params, timeout=30)
+    except requests.HTTPError as e:
+        code = getattr(e.response, "status_code", None)
+        if model_name == "hrrr" and code == 400:
+            fallback_params = dict(params)
+            fallback_params.pop("models", None)
+            resp = _get_with_retry(url, fallback_params, timeout=30)
+        else:
+            raise
+    data = resp.json()
+
+    times = data.get("daily", {}).get("time", [])
+    temps = data.get("daily", {}).get("temperature_2m_max", [])
+
+    today = date.today().isoformat()
+    result = {}
+    for t, v in zip(times, temps):
+        if v is not None and t < today:  # only past dates, not today's forecast
+            result[t] = float(v)
+    return result
+
+
 def fetch_historical_model_forecast(model_name: str, lat: float, lon: float,
                                      target_date: str, timezone: str) -> float | None:
     """

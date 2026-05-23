@@ -1,4 +1,6 @@
 # === SECRETS — NEVER COMMIT ===
+Python-3.12.10/
+
 .env
 *.pem
 *.key

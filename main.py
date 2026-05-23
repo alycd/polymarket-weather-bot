@@ -26,7 +26,7 @@ import logging
 import os
 import sys
 from datetime import date, timedelta
-from config import CITIES, BACKFILL_DAYS, MIN_HISTORY_DAYS, OPENMETEO_MODELS
+from config import CITIES, BACKFILL_DAYS, MIN_HISTORY_DAYS, OPENMETEO_MODELS, HRRR_LAT_MIN, HRRR_LAT_MAX, HRRR_LON_MIN, HRRR_LON_MAX
 import db
 
 LOCK_FILE = os.path.join(os.path.dirname(__file__), "polymarket_bot.lock")
@@ -142,12 +142,14 @@ def cmd_backfill():
     """
     For each city:
       1. Pull 180 days of historical ASOS daily-max temps
-      2. Pull 180 days of Open-Meteo Archive actuals (ERA5, as historical model proxy)
-      3. Pull 180 days of each model's forecast (uses archive as proxy)
-      4. Recompute bias corrections
+      2. Pull 180 days of Open-Meteo Archive actuals (ERA5 ground truth)
+      3. Backfill last 92 days of historical NWP model forecasts (for bias pairing)
+      4. Store live model forecasts for upcoming dates
+      5. Recompute bias corrections
+      6. Fetch 30-year climatological baseline
     """
     from data.noaa import fetch_asos_daily_max
-    from data.openmeteo import fetch_historical_actuals, fetch_all_models
+    from data.openmeteo import fetch_historical_actuals, fetch_all_models, fetch_past_model_forecasts
     from signals.bias_corrector import recompute_bias
 
     end_date   = date.today().isoformat()
@@ -169,7 +171,7 @@ def cmd_backfill():
         db.upsert_station(icao, city, lat, lon, tz, cfg["uses_fahrenheit"])
 
         # ── Step 1: ASOS historical daily max ──
-        print(f"  [1/5] ASOS historical obs...")
+        print(f"  [1/6] ASOS historical obs...")
         try:
             asos_data = fetch_asos_daily_max(asos, start_date, end_date)
             count_asos = 0
@@ -182,7 +184,7 @@ def cmd_backfill():
             logger.error("ASOS backfill failed for %s: %s", icao, e)
 
         # ── Step 2: Open-Meteo Archive (ERA5 reanalysis as ground truth) ──
-        print(f"  [2/5] Open-Meteo Archive (ERA5) actuals...")
+        print(f"  [2/6] Open-Meteo Archive (ERA5) actuals...")
         try:
             archive_data = fetch_historical_actuals(lat, lon, start_date, end_date, tz)
             count_arch = 0
@@ -194,10 +196,33 @@ def cmd_backfill():
             print(f"        {R}✗ Archive failed: {e}{RST}")
             logger.error("Archive backfill failed for %s: %s", icao, e)
 
-        # ── Step 3: Live model forecasts for upcoming tradeable dates ──
+        # ── Step 3: Historical NWP forecast backfill (last 92 days) ──
+        # Fetches what each model actually predicted for past dates so that
+        # recompute_bias() has matched (obs, forecast) pairs to work with.
+        print(f"  [3/6] Historical NWP forecast backfill (past 92 days)...")
+        hist_stored = 0
+        hist_errors = 0
+        in_conus = (HRRR_LAT_MIN <= lat <= HRRR_LAT_MAX and
+                    HRRR_LON_MIN <= lon <= HRRR_LON_MAX)
+        models_to_backfill = [m for m in OPENMETEO_MODELS if m != "hrrr" or in_conus]
+        for model_name in models_to_backfill:
+            try:
+                past_fc = fetch_past_model_forecasts(model_name, lat, lon, tz, past_days=92)
+                for fc_date, fc_temp in past_fc.items():
+                    db.insert_forecast_if_missing(icao, fc_date, model_name, fc_temp)
+                    hist_stored += 1
+            except Exception as e:
+                hist_errors += 1
+                logger.debug("Historical backfill failed for %s %s: %s", icao, model_name, e)
+        if hist_errors == len(models_to_backfill):
+            print(f"        {Y}⚠ all models failed (network?){RST}")
+        else:
+            print(f"        {G}✓ {hist_stored} forecast-day slots stored ({hist_errors} model(s) failed){RST}")
+
+        # ── Step 4: Live model forecasts for upcoming tradeable dates ──
         # Bias corrections accumulate as we run daily scans.
         # Try today, then tomorrow (model endpoints advance past midnight UTC).
-        print(f"  [3/5] Storing live model forecasts...")
+        print(f"  [4/6] Storing live model forecasts...")
         stored_any = False
         for days_ahead in range(0, 3):
             forecast_date = (date.today() + timedelta(days=days_ahead)).isoformat()
@@ -216,8 +241,8 @@ def cmd_backfill():
             print(f"        {Y}⚠ no forecasts available{RST}")
             logger.warning("All forecast dates failed for %s", icao)
 
-        # ── Step 4: Recompute bias corrections ──
-        print(f"  [4/5] Computing bias corrections...")
+        # ── Step 5: Recompute bias corrections ──
+        print(f"  [5/6] Computing bias corrections...")
         try:
             biases = recompute_bias(icao)
             n_biases = sum(len(months) for months in biases.values())
@@ -234,8 +259,8 @@ def cmd_backfill():
             print(f"        {R}✗ Bias computation failed: {e}{RST}")
             logger.error("Bias failed for %s: %s", icao, e)
 
-        # ── Step 5: Climatological baseline ──
-        print(f"  [5/5] Fetching 30-year climatological baseline...")
+        # ── Step 6: Climatological baseline ──
+        print(f"  [6/6] Fetching 30-year climatological baseline...")
         try:
             from data.climatology import fetch_climatology
             climo = fetch_climatology(lat, lon, tz)
@@ -405,13 +430,16 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
     for (city, target_date), bucket_markets in sorted(grouped.items()):
         if city not in CITIES:
             continue
-        # Skip anything that is not TODAY
-        if target_date != today_str:
-            logger.debug("Skipping date %s %s (limit: TODAY only)", city, target_date)
+        # Allow markets resolving within the next 3 days (0–3 days ahead).
+        # Previously limited to today-only, which combined with the near-expiry
+        # MIN_EDGE multiplier created a 37.5% edge requirement — nearly impossible.
+        try:
+            days_ahead = (date.fromisoformat(target_date) - date.today()).days
+        except (ValueError, TypeError):
+            days_ahead = -1
+        if days_ahead < 0 or days_ahead > 3:
+            logger.debug("Skipping date %s %s (%d days ahead)", city, target_date, days_ahead)
             continue
-        # Same-day markets: always attempt — nowcast weight naturally goes from 0→1
-        # through the day and influences sizing in the edge calculator, but we don't
-        # hard-gate on it so morning scans can still enter positions.
         cfg  = CITIES[city]
         icao = cfg["icao"]
 

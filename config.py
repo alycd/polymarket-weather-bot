@@ -42,9 +42,9 @@ GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
 
 # Trading thresholds
-MIN_EDGE             = 0.25   # raised from 0.12 — 0.12-0.20 edge trades had 19% win rate
-MIN_WIN_PROB         = 0.90   # min p_win for NO trades after shrinkage — filters bad 80-90% confidence bucket (45.5% actual win rate)
-MIN_WIN_PROB_YES     = 0.55   # min model_prob for YES trades — lower bar since YES = model predicts the bucket
+MIN_EDGE             = 0.10   # lowered from 0.25 to generate trades; raise back after model proves calibration
+MIN_WIN_PROB         = 0.70   # lowered from 0.90 — 0.90 blocked all NO trades in practice
+MIN_WIN_PROB_YES     = 0.52   # min model_prob for YES trades — lower bar since YES = model predicts the bucket
 NO_ENTRY_MIN_PRICE   = 0.20   # don't buy NO below 20¢ — market too confident in YES, model loses this fight (0/4 live, -100% ROI)
 NO_ENTRY_MAX_PRICE   = 0.75   # don't buy NO above 75¢ — terrible risk/reward (2-10% ROI), occasional -100% blowup
 NO_MIN_ENSEMBLE_STD  = 0.8    # skip NO bets when models agree tightly — low std means temp heading for a specific bucket (29-38% WR below 0.8°C)
@@ -122,7 +122,7 @@ FORECAST_T_DF           = 4
                                # Prior value 0.90 caused YES bets to win only 48-67% (near coin flip).
 
 # Minimum edge multiplier for very recent markets (resolving within 7 days)
-MIN_EDGE_RECENT_MULTIPLIER = 1.5   # require 1.5× MIN_EDGE for lead_days <= 7
+MIN_EDGE_RECENT_MULTIPLIER = 1.0   # lowered from 1.5 — the 1.5× multiplier blocked all trades since every scanned market falls within 7 days
 MIN_EDGE_RECENT_DAYS       = 7
 
 # Per-city additive forecast bias corrections (°C added to ensemble mean).

@@ -395,6 +395,29 @@ def insert_forecast(icao, target_date: str, model_name: str, predicted_high_c: f
               datetime.utcnow().isoformat(), lead_days))
 
 
+def insert_forecast_if_missing(icao, target_date: str, model_name: str, predicted_high_c: float):
+    """Insert a historical forecast only if no row yet exists for (icao, target_date, model_name).
+    Used for idempotent backfill so re-running --backfill doesn't accumulate duplicates."""
+    with _conn() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM model_forecasts WHERE icao=? AND target_date=? AND model_name=? LIMIT 1",
+            (icao, target_date, model_name)
+        ).fetchone()
+        if exists:
+            return
+        try:
+            from datetime import date as _d
+            lead_days = (_d.fromisoformat(target_date) - _d.today()).days
+        except (ValueError, TypeError):
+            lead_days = None
+        conn.execute("""
+            INSERT INTO model_forecasts
+                (icao, target_date, model_name, predicted_high_c, fetched_at, lead_time_days)
+            VALUES (?,?,?,?,?,?)
+        """, (icao, target_date, model_name, predicted_high_c,
+              datetime.utcnow().isoformat(), lead_days))
+
+
 def get_forecasts_for_date(icao, target_date: str) -> list[dict]:
     """Get the most recent forecast per model for a given target date."""
     with _conn() as conn:
