@@ -168,19 +168,23 @@ function renderPositions(pos) {
       </tr>`;
     }
     const dir = p.direction==='YES' ? '<span class="badge b-yes">YES</span>' : '<span class="badge b-no">NO</span>';
+    const nowStr = p.current_price != null ? (p.current_price*100).toFixed(1)+'¢' : '<span class="md">—</span>';
+    const upnlStr = p.unreal_pnl != null
+      ? `<span class="${pClass(p.unreal_pnl)}">${p.unreal_pnl>=0?'+$':'-$'}${Math.abs(p.unreal_pnl).toFixed(2)}</span>`
+      : '<span class="md">—</span>';
     return `<tr class="${p.clob_token_yes?'row-click':''} slide-up" style="animation-delay: ${i*0.03}s" data-id="${p.trade_id}">
       <td class="fw6">${p.city}</td>
       <td class="mono md">${p.target_date}</td>
       <td>${dir} <span class="mono md" style="font-size:11px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span></td>
       <td class="tr mono">${(p.entry_price*100).toFixed(1)}¢</td>
+      <td class="tr mono">${nowStr}</td>
       <td class="tr mono fw6">${p.size_usdc>0?'$'+p.size_usdc.toFixed(2):'<span class="md">—</span>'}</td>
-      <td class="tr mono md">${(p.model_prob*100).toFixed(1)}%</td>
-      <td class="tr mono ${eClass(p.edge)}">${p.edge>=0?'+':''}${p.edge.toFixed(3)}</td>
+      <td class="tr mono fw6">${upnlStr}</td>
     </tr>`;
   }).join('');
   const thead = pm
     ? '<thead><tr><th>Market</th><th>End</th><th>Side</th><th class="tr">Avg</th><th class="tr">Value</th><th class="tr">Mkt</th><th class="tr">PnL</th></tr></thead>'
-    : '<thead><tr><th>City</th><th>Date</th><th>Bet</th><th class="tr">Entry</th><th class="tr">Size</th><th class="tr">Model %</th><th class="tr">Edge</th></tr></thead>';
+    : '<thead><tr><th>City</th><th>Date</th><th>Bet</th><th class="tr">Entry</th><th class="tr">Now</th><th class="tr">Size</th><th class="tr">Unreal PnL</th></tr></thead>';
   card.innerHTML = `
     <div class="card-hdr">
       <span class="card-title glow-text">Open Positions <span class="card-badge">${pos.length}</span></span>

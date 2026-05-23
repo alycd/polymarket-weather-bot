@@ -915,6 +915,24 @@ def bulk_insert_prices(rows: list[dict]):
         """, rows)
 
 
+def get_latest_prices_for_markets(market_ids: list[str]) -> dict[str, tuple[float, str]]:
+    """Return {market_id: (mid_price, scanned_at)} for the most recent snapshot of each market."""
+    if not market_ids:
+        return {}
+    placeholders = ",".join("?" * len(market_ids))
+    with _conn() as conn:
+        rows = conn.execute(f"""
+            SELECT market_id, mid_price, scanned_at
+            FROM price_history
+            WHERE market_id IN ({placeholders})
+              AND scanned_at = (
+                  SELECT MAX(scanned_at) FROM price_history p2
+                  WHERE p2.market_id = price_history.market_id
+              )
+        """, market_ids).fetchall()
+    return {r["market_id"]: (r["mid_price"], r["scanned_at"]) for r in rows}
+
+
 # ── Calibration predictions ───────────────────────────────────────────────────
 
 def record_prediction(pred_id: str, market_id: str,

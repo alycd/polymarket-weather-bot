@@ -85,6 +85,9 @@ def build_performance_panel(pnl: dict, cal: dict) -> Panel:
 
 
 def build_positions_table(trades: list) -> Table:
+    market_ids = [tr["market_id"] for tr in trades]
+    live_prices = db.get_latest_prices_for_markets(market_ids)
+
     t = Table(
         box=box.SIMPLE_HEAD,
         border_style="bright_black",
@@ -98,9 +101,10 @@ def build_positions_table(trades: list) -> Table:
     t.add_column("Bucket", no_wrap=True, min_width=16)
     t.add_column("Dir", justify="center", min_width=4)
     t.add_column("Entry", justify="right", min_width=6)
+    t.add_column("Now", justify="right", min_width=6)
     t.add_column("Size", justify="right", min_width=7)
+    t.add_column("Unreal PnL", justify="right", min_width=10)
     t.add_column("Model", justify="right", min_width=5)
-    t.add_column("Mkt", justify="right", min_width=5)
     t.add_column("Edge", justify="right", min_width=6)
 
     for tr in trades:
@@ -112,10 +116,20 @@ def build_positions_table(trades: list) -> Table:
         dir_text = Text(tr["direction"])
         dir_text.stylize("bold cyan" if tr["direction"] == "YES" else "bold magenta")
 
-        edge = tr["edge"]
-        edge_text = _color_edge(edge)
-
+        edge_text = _color_edge(tr["edge"])
         size_style = "bold" if tr["size_usdc"] >= 20 else ""
+
+        price_info = live_prices.get(tr["market_id"])
+        if price_info:
+            yes_mid, scanned_at = price_info
+            current_side_price = yes_mid if tr["direction"] == "YES" else (1.0 - yes_mid)
+            shares = tr["size_usdc"] / tr["entry_price"]
+            unreal_pnl = shares * current_side_price - tr["size_usdc"]
+            now_str = f"{current_side_price:.3f}"
+            unreal_text = _color_pnl(unreal_pnl)
+        else:
+            now_str = "[dim]—[/]"
+            unreal_text = Text("[dim]—[/]")
 
         t.add_row(
             tr["city"],
@@ -123,9 +137,10 @@ def build_positions_table(trades: list) -> Table:
             bucket,
             dir_text,
             f"${tr['entry_price']:.3f}",
+            now_str,
             Text(f"${tr['size_usdc']:.2f}", style=size_style),
+            unreal_text,
             f"{tr['model_prob']:.3f}",
-            f"{tr['market_prob']:.3f}",
             edge_text,
         )
 

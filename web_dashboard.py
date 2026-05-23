@@ -306,6 +306,21 @@ def _build_data(mode: str) -> dict:
     trades = _enrich_trades(open_trades_raw, current_path)
     history = _enrich_trades(history_raw, current_path)
 
+    live_prices = db.get_latest_prices_for_markets([t["market_id"] for t in trades if t.get("market_id")])
+    for t in trades:
+        info = live_prices.get(t.get("market_id", ""))
+        if info:
+            yes_mid, scanned_at = info
+            cur = yes_mid if t["direction"] == "YES" else (1.0 - yes_mid)
+            shares = t["size_usdc"] / t["entry_price"] if t["entry_price"] else 0
+            t["current_price"] = round(cur, 4)
+            t["unreal_pnl"] = round(shares * cur - t["size_usdc"], 2)
+            t["price_age"] = scanned_at
+        else:
+            t["current_price"] = None
+            t["unreal_pnl"] = None
+            t["price_age"] = None
+
     all_biases = db.get_all_biases_batch()
     stations_raw = db.get_all_stations()
     stations = []

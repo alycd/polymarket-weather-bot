@@ -1135,6 +1135,8 @@ def cmd_exit_scan(dry_run=False):
         if current_mid is None:
             continue
 
+        db.record_price(trade["market_id"], current_mid)
+
         # Current exit value per share (what we'd receive selling now)
         if direction == "YES":
             exit_val = prices["bid"] if prices["bid"] is not None else current_mid
