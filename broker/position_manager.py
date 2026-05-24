@@ -31,36 +31,157 @@ logger = logging.getLogger(__name__)
 _ASOS_PRIMARY_CITIES = {"Tel Aviv"}
 
 _GAMMA_API = "https://gamma-api.polymarket.com/markets"
+_CLOB_API  = "https://clob.polymarket.com"
+_DATA_API  = "https://data-api.polymarket.com"
 
 
-def _query_polymarket_outcome(clob_token_yes: str) -> str | None:
+def _query_polymarket_outcome(clob_token_yes: str, market_id: str = "") -> str | None:
     """
-    Query Polymarket Gamma API to see if a market has resolved.
-    Returns 'yes' | 'no' if resolved, or None if still open / API failure.
-    'yes' means the YES outcome won (bucket hit), 'no' means it didn't.
+    Determine market outcome from Polymarket APIs. Returns 'yes' | 'no' | None.
+
+    Resolution cascade:
+      1. Gamma /markets?clob_token_ids=... — works while Gamma still indexes the market
+      2. CLOB  /markets/{condition_id}    — works after Gamma drops the market;
+                                            tokens[].winner is authoritative
     """
-    if not clob_token_yes:
-        return None
+    # ── 1. Gamma ────────────────────────────────────────────────────────────
+    if clob_token_yes:
+        try:
+            resp = _req.get(_GAMMA_API, params={"clob_token_ids": clob_token_yes}, timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                m = data[0]
+                if m.get("resolved"):
+                    winner = (m.get("winner") or "").strip().lower()
+                    if winner in ("yes", "no"):
+                        logger.info("Gamma resolved: winner=%s", winner)
+                        return winner
+        except Exception as e:
+            logger.warning("Gamma outcome query failed: %s", e)
+
+    # ── 2. CLOB /markets/{condition_id} ─────────────────────────────────────
+    if market_id:
+        try:
+            resp = _req.get(f"{_CLOB_API}/markets/{market_id}", timeout=8)
+            if resp.ok:
+                tokens = resp.json().get("tokens", [])
+                for token in tokens:
+                    if token.get("winner") is True:
+                        outcome = token.get("outcome", "").lower()
+                        if outcome in ("yes", "no"):
+                            logger.info("CLOB resolved: winner=%s (condition_id=%s...)",
+                                        outcome, market_id[:12])
+                            return outcome
+        except Exception as e:
+            logger.warning("CLOB market query failed for %s: %s", market_id[:16], e)
+
+    return None
+
+
+def _weather_fallback_outcome(icao: str, target_date: str, city: str,
+                              bucket_lo, bucket_hi, bucket_unit: str) -> str | None:
+    """
+    Paper-mode fallback: determine YES/NO from actual temperature when Gamma
+    has dropped the market from its index. Mirrors Polymarket's own bucket math.
+    Returns 'yes' | 'no' | None (if temp fetch fails).
+    """
+    import math
+    from signals.edge_calculator import bucket_bounds_to_celsius
     try:
-        resp = _req.get(_GAMMA_API, params={"clob_token_ids": clob_token_yes}, timeout=8)
-        resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            return None
-        m = data[0]
-        if not m.get("resolved"):
-            return None
-        winner = (m.get("winner") or "").strip().lower()
-        if winner in ("yes", "no"):
-            logger.info("Polymarket resolved: winner=%s", winner)
-            return winner
+        actual_c, source = get_actual_high_c(icao, target_date, city)
+        lo_c, hi_c = bucket_bounds_to_celsius(bucket_lo, bucket_hi, bucket_unit)
+        lo = lo_c if lo_c is not None else -math.inf
+        hi = hi_c if hi_c is not None else math.inf
+        yes_won = lo <= actual_c < hi
+        logger.info(
+            "Weather fallback %s %s: actual=%.1f°C (src=%s) bucket=[%s,%s]°C → YES_won=%s",
+            city, target_date, actual_c, source,
+            f"{lo:.1f}" if lo != -math.inf else "-inf",
+            f"{hi:.1f}" if hi != math.inf else "+inf",
+            yes_won,
+        )
+        return "yes" if yes_won else "no"
     except Exception as e:
-        logger.warning("Polymarket outcome query failed: %s", e)
+        logger.warning("Weather fallback failed for %s %s: %s", city, target_date, e)
+        return None
+
+
+def _query_outcome_via_data_api(clob_token_yes: str, market_id: str) -> str | None:
+    """
+    Fallback resolution via Polymarket Data API — for markets Gamma no longer indexes.
+    Only works in live mode (requires a real proxy wallet with actual positions).
+
+    Resolution logic:
+      - Losing YES token remains in /positions with currentPrice ≈ 0  → NO won
+      - Winning YES token appears in /positions?redeemable=true         → YES won
+      - Same conditionId, different token in redeemable                 → NO won
+
+    Returns 'yes' | 'no' | None.
+    """
+    try:
+        from broker.live_broker import get_proxy_address
+    except ImportError:
+        return None
+
+    proxy = get_proxy_address()
+    if not proxy:
+        return None
+
+    import requests as _r2
+
+    # Step A: check all current positions — losing tokens linger at price ≈ 0
+    try:
+        r = _r2.get(
+            f"{_DATA_API}/positions",
+            params={"user": proxy, "sizeThreshold": 0.001},
+            timeout=12,
+        )
+        if r.ok:
+            for p in (r.json() if isinstance(r.json(), list) else []):
+                if p.get("asset") == clob_token_yes:
+                    price = float(p.get("currentPrice") or 0.5)
+                    if price <= 0.01:
+                        logger.info("Data API positions: YES price=%.4f → NO won", price)
+                        return "no"
+                    if price >= 0.99:
+                        logger.info("Data API positions: YES price=%.4f → YES won", price)
+                        return "yes"
+                    return None  # Market still active
+    except Exception as e:
+        logger.warning("Data API positions check failed: %s", e)
+
+    # Step B: check redeemable positions — winning tokens before auto-redemption
+    try:
+        r2 = _r2.get(
+            f"{_DATA_API}/positions",
+            params={"user": proxy, "sizeThreshold": 0.001, "redeemable": "true"},
+            timeout=12,
+        )
+        if r2.ok:
+            for p in (r2.json() if isinstance(r2.json(), list) else []):
+                if p.get("asset") == clob_token_yes:
+                    logger.info("Data API redeemable: YES token present → YES won")
+                    return "yes"
+                if market_id and p.get("conditionId") == market_id:
+                    logger.info("Data API redeemable: NO token present (conditionId match) → NO won")
+                    return "no"
+    except Exception as e:
+        logger.warning("Data API redeemable check failed: %s", e)
+
     return None
 
 
 def _get_clob_token(trade: dict) -> str:
-    """Look up clob_token_yes for a trade from the markets table."""
+    """
+    Return the YES CLOB token for a trade.
+    Uses trade["clob_token_yes"] when populated (new trades); falls back to
+    a markets-table lookup for older trades that pre-date the column.
+    """
+    token = (trade.get("clob_token_yes") or "").strip()
+    if token:
+        return token
+
     import sqlite3
     conn = sqlite3.connect(db.DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -160,7 +281,7 @@ def resolve_expired_trades(dry_run: bool = False) -> list[dict]:
     weather_fallback_trades = db.get_weather_fallback_trades()
     for trade in weather_fallback_trades:
         clob_token = _get_clob_token(trade)
-        pm_winner = _query_polymarket_outcome(clob_token)
+        pm_winner = _query_polymarket_outcome(clob_token, trade.get("market_id", ""))
         if pm_winner is None:
             continue
         yes_won = (pm_winner == "yes")
@@ -196,8 +317,28 @@ def resolve_expired_trades(dry_run: bool = False) -> list[dict]:
         size        = trade["size_usdc"]
 
         # ── Step 1: ask Polymarket who won ───────────────────────────────────
+        # Resolution cascade (same for both modes):
+        #   Gamma → CLOB /markets/{condition_id} → Data API (live) / weather (paper)
+        market_id  = trade.get("market_id", "")
         clob_token = _get_clob_token(trade)
-        pm_winner  = _query_polymarket_outcome(clob_token)  # 'yes' | 'no' | None
+        pm_winner  = _query_polymarket_outcome(clob_token, market_id)  # 'yes' | 'no' | None
+
+        outcome_source = "polymarket"
+        if pm_winner is not None:
+            # Check whether CLOB was the source (Gamma would have returned it directly)
+            pass  # outcome_source stays "polymarket" for both Gamma and CLOB paths
+
+        # If Gamma+CLOB both failed, try Data API positions (live) or weather (paper)
+        if pm_winner is None and db.get_mode() == "live":
+            pm_winner = _query_outcome_via_data_api(clob_token, market_id)
+            if pm_winner is not None:
+                outcome_source = "data_api"
+
+        if pm_winner is None and db.get_mode() == "paper":
+            pm_winner = _weather_fallback_outcome(icao, target_date, city,
+                                                  bucket_lo, bucket_hi, bucket_unit)
+            if pm_winner is not None:
+                outcome_source = "weather_fallback"
 
         if pm_winner is not None:
             # Ground truth from Polymarket — no temperature math needed for outcome
@@ -206,9 +347,8 @@ def resolve_expired_trades(dry_run: bool = False) -> list[dict]:
                 outcome = "won" if yes_won else "lost"
             else:
                 outcome = "won" if not yes_won else "lost"
-            outcome_source = "polymarket"
-            logger.info("PM resolution %s %s: YES_won=%s → %s %s",
-                        city, target_date, yes_won, direction, outcome)
+            logger.info("PM resolution %s %s: YES_won=%s → %s %s (src=%s)",
+                        city, target_date, yes_won, direction, outcome, outcome_source)
         else:
             # Polymarket has not resolved this market yet.
             # Live-mode policy: never self-resolve from weather fallbacks.

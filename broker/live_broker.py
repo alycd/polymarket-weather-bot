@@ -116,34 +116,56 @@ def _get_client():
         funder=proxy_address if proxy_address else None,
     )
     logger.info("CLOB client initialized — address: %s", _client.get_address())
+
+    # Sync balance allowance so the CLOB recognises current wallet state.
+    # Required for pUSD markets (signature_type=3); harmless for USDC (type=0).
+    _sync_balance_allowance(_client, sig_type)
+
     return _client
+
+
+def _sync_balance_allowance(client, sig_type: int) -> None:
+    """Call /balance-allowance/update to sync on-chain balance with the CLOB."""
+    import requests as _r
+    from py_clob_client.clob_types import RequestArgs
+    from py_clob_client.headers.headers import create_level_2_headers
+    try:
+        path = "/balance-allowance/update"
+        req_args = RequestArgs(method="GET", request_path=path)
+        headers = create_level_2_headers(client.signer, client.creds, req_args)
+        resp = _r.get(
+            f"{CLOB_HOST}{path}?asset_type=COLLATERAL&signature_type={sig_type}",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.ok:
+            logger.info("Balance allowance synced (sig_type=%d)", sig_type)
+        else:
+            logger.warning("Balance allowance sync returned %d: %s", resp.status_code, resp.text[:120])
+    except Exception as e:
+        logger.warning("Balance allowance sync failed: %s", e)
 
 
 def _get_no_token_id(market: dict) -> str | None:
     """
-    Fetch the NO token ID for this market from the Gamma API.
-    The CLOB market has exactly 2 tokens: YES and NO.
-    We already have clob_token_yes; pick the other one.
+    Fetch the NO token ID via CLOB GET /markets/{condition_id}.
+
+    Gamma has a known bug where it sometimes omits the sibling (NO) token when
+    queried by YES token ID, causing Missing Instrument errors. The CLOB endpoint
+    returns both tokens explicitly by outcome label, so we use it instead.
     """
     import requests
     market_id = market.get("market_id", "")
     clob_yes   = market.get("clob_token_yes", "")
+    if not market_id:
+        logger.warning("Cannot fetch NO token: market_id missing for %s", clob_yes[:16])
+        return None
     try:
-        r = requests.get(
-            "https://gamma-api.polymarket.com/markets",
-            params={"clob_token_ids": clob_yes},
-            timeout=8,
-        )
+        r = requests.get(f"{CLOB_HOST}/markets/{market_id}", timeout=8)
         r.raise_for_status()
-        data = r.json()
-        if isinstance(data, list) and data:
-            data = data[0]
-        import json as _json
-        tokens_raw = data.get("clobTokenIds") or "[]"
-        tokens = _json.loads(tokens_raw) if isinstance(tokens_raw, str) else tokens_raw
-        for t in tokens:
-            if t != clob_yes:
-                return t
+        for token in r.json().get("tokens", []):
+            if token.get("outcome", "").lower() == "no":
+                return str(token["token_id"])
     except Exception as e:
         logger.warning("Could not fetch NO token for %s: %s", market_id[:16], e)
     return None
