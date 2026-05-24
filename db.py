@@ -271,21 +271,9 @@ def init_db():
             conn.execute("ALTER TABLE trades ADD COLUMN clob_token_yes TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass
-        fixed = conn.execute(
-            "SELECT COUNT(*) as c FROM trades WHERE status='lost' AND bankroll_fix_applied=0"
-        ).fetchone()["c"]
-        if fixed > 0:
-            rows = conn.execute(
-                "SELECT trade_id, size_usdc FROM trades WHERE status='lost' AND bankroll_fix_applied=0"
-            ).fetchall()
-            total_correction = sum(r["size_usdc"] for r in rows)
-            conn.execute("UPDATE bankroll SET balance = balance + ? WHERE id=1",
-                         (total_correction,))
-            conn.execute(
-                "UPDATE trades SET bankroll_fix_applied=1 WHERE status='lost' AND bankroll_fix_applied=0"
-            )
-            logger.info("Bankroll double-deduction fix: restored $%.2f across %d lost trades",
-                        total_correction, fixed)
+        # bankroll_fix_applied migration has been fully applied and retired.
+        # Bankroll is now authoritative from set_bankroll() after manual correction (2026-05-24).
+        conn.execute("UPDATE trades SET bankroll_fix_applied=1 WHERE bankroll_fix_applied=0")
     logger.info("DB initialised at %s", DB_PATH)
 
 

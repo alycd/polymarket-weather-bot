@@ -17,6 +17,7 @@ def compute_pnl_summary() -> dict:
 
     return {
         "bankroll":   bankroll,
+        "initial":    initial,
         "deployed":   deployed,
         "available":  max(0.0, bankroll - deployed),
         "total_pnl":  total_pnl,

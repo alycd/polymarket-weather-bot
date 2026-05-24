@@ -97,7 +97,7 @@ function renderHero(d) {
       ' · ROI ' + (p.pct_return>=0?'+':'') + p.pct_return.toFixed(1) + '% (est.)';
   } else {
     document.getElementById('hv-br-sub').textContent  = p.n_open + ' open · $' + p.deployed.toFixed(0) + ' deployed';
-    const startBr = p.bankroll + p.deployed - p.total_pnl;
+    const startBr = p.initial != null ? p.initial : 1000;
     document.getElementById('hv-pnl-sub').textContent = (p.pct_return>=0?'+':'') + p.pct_return.toFixed(1) + '% · $' + startBr.toFixed(0) + ' starting';
   }
   document.getElementById('hv-wr-sub').textContent  = p.n_wins + 'W / ' + p.n_losses + 'L · ' + p.n_resolved + ' closed';
@@ -278,12 +278,18 @@ function renderHistory(hist) {
   const histThead = pm
     ? '<thead><tr><th>Market</th><th class="hide-xs">End</th><th>Side</th><th>Result</th><th class="tr">PnL</th></tr></thead>'
     : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th>Result</th><th class="tr">PnL</th><th class="tr hide-xs">Actual</th></tr></thead>';
+  const histPnlSum = hist.reduce((s, t) => s + (t.pnl || 0), 0);
+  const histWins   = hist.filter(t => t.status === 'won').length;
+  const histLosses = hist.filter(t => t.status === 'lost' || t.status === 'stop_loss').length;
+  const histPnlStr = `<span class="pos-pnl-sum mono ${pClass(histPnlSum)}">${histPnlSum >= 0 ? '+$' : '-$'}${Math.abs(histPnlSum).toFixed(2)}</span>`;
+  const histWLStr  = `<span class="card-hint">${histWins}W / ${histLosses}L</span>`;
   card.innerHTML = `
     <div class="card-hdr">
       <span class="card-title glow-text">${histTitle} <span class="card-badge">${hist.length}</span></span>
-      <span class="card-tools">
+      <div class="card-hdr-right">
+        ${histPnlStr}${histWLStr}
         ${hist.length > HISTORY_DEFAULT_LIMIT ? `<button class="link-btn" id="hist-toggle">${_historyExpanded ? 'Show less' : `Show all (${hist.length})`}</button>` : ''}
-      </span>
+      </div>
     </div>
     <div class="tbl-wrap"><table class="hist-tbl">
     ${histThead}
