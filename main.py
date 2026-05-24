@@ -1214,6 +1214,13 @@ def cmd_exit_scan(dry_run=False):
                     logger.warning("Live sell failed for %s: %s", trade_id[:8], e)
             db.resolve_trade(trade_id, None, outcome, exit_val, outcome_source="exit_scan")
             db.log_event("EXIT_SCAN", reason, city=city, icao=trade.get("icao", ""))
+            from telegram import send_telegram_notification
+            pnl_str = f"{'+' if pnl_est >= 0 else ''}{pnl_est:.2f}"
+            send_telegram_notification(
+                "WIN" if outcome == "won" else "LOSS",
+                f"{direction} | {city} {target_date} | "
+                f"entry={entry_price:.3f}→{exit_val:.3f} | PnL: {pnl_str} [{reason}]",
+            )
             exited += 1
         else:
             print(f"    {Y}[DRY RUN] would exit{RST}")
