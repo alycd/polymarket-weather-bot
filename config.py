@@ -42,10 +42,10 @@ GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
 
 # Trading thresholds
-MIN_EDGE             = 0.10   # lowered from 0.25 to generate trades; raise back after model proves calibration
+MIN_EDGE             = 0.12   # market beats model ~70% of the time; 0.10 is too thin until bias corrections accumulate
 MIN_WIN_PROB         = 0.70   # lowered from 0.90 — 0.90 blocked all NO trades in practice
 MIN_WIN_PROB_YES     = 0.52   # min model_prob for YES trades — lower bar since YES = model predicts the bucket
-NO_ENTRY_MIN_PRICE   = 0.20   # don't buy NO below 20¢ — market too confident in YES, model loses this fight (0/4 live, -100% ROI)
+NO_ENTRY_MIN_PRICE   = 0.35   # don't buy NO below 35¢ — 3/3 losses below this threshold live; bad risk/reward and fighting strong market consensus
 NO_ENTRY_MAX_PRICE   = 0.75   # don't buy NO above 75¢ — terrible risk/reward (2-10% ROI), occasional -100% blowup
 NO_MIN_ENSEMBLE_STD  = 0.8    # skip NO bets when models agree tightly — low std means temp heading for a specific bucket (29-38% WR below 0.8°C)
 ENSEMBLE_STD_MIN     = 0.5    # °C — models must disagree at least this much
@@ -55,7 +55,7 @@ KELLY_FRACTION       = 0.10   # conservative for live trading (was 0.25 in paper
 MAX_TRADE_FRACTION   = 0.08   # max single trade = 8% of current bankroll
 MAX_TRADE_USDC       = 15.0   # hard dollar cap per trade — prevents huge bets when bankroll grows
 STARTING_BANKROLL    = 1000.0
-MAX_DEPLOYED_FRACTION    = 0.60   # max fraction of total portfolio in open positions (was 0.90)
+MAX_DEPLOYED_FRACTION    = 0.40   # max fraction of total portfolio in open positions (reverted to original — 0.60 was too loose, correlated NO bets can all lose on same day)
 MAX_CITY_DATE_FRACTION   = 0.15   # max total deployed for one city+date (limits correlated loss exposure)
 MIN_MARKET_VOLUME_USDC   = 500.0  # skip markets with lifetime volume below this — thin books mean wide spreads and our order would move the price
 
@@ -537,6 +537,9 @@ TSA_FORECAST_STD_FRACTION = 0.05
 
 # TSA market bucket boundaries (millions of passengers)
 TSA_BUCKETS_M = [None, 2.0, 2.2, 2.4, 2.6, 2.8, None]  # None = open-ended
+
+# Cities to exclude from all trading (add city names exactly as they appear in CITIES keys).
+CITY_EXCLUDE: set[str] = set()
 
 # Inverted lookup: question keyword → city key
 CITY_ALIASES = {

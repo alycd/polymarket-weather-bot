@@ -26,7 +26,7 @@ import logging
 import os
 import sys
 from datetime import date, timedelta
-from config import CITIES, BACKFILL_DAYS, MIN_HISTORY_DAYS, OPENMETEO_MODELS, HRRR_LAT_MIN, HRRR_LAT_MAX, HRRR_LON_MIN, HRRR_LON_MAX
+from config import CITIES, CITY_EXCLUDE, BACKFILL_DAYS, MIN_HISTORY_DAYS, OPENMETEO_MODELS, HRRR_LAT_MIN, HRRR_LAT_MAX, HRRR_LON_MIN, HRRR_LON_MAX
 import db
 
 LOCK_FILE = os.path.join(os.path.dirname(__file__), "polymarket_bot.lock")
@@ -428,7 +428,7 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
     tomorrow_str = (date.today() + timedelta(days=1)).isoformat()
 
     for (city, target_date), bucket_markets in sorted(grouped.items()):
-        if city not in CITIES:
+        if city not in CITIES or city in CITY_EXCLUDE:
             continue
         # Allow markets resolving within the next 3 days (0–3 days ahead).
         # Previously limited to today-only, which combined with the near-expiry
