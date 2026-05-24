@@ -123,11 +123,11 @@ polymarket-weather-bot/
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `MIN_EDGE` | 0.08 | Minimum model–market gap to enter |
-| `KELLY_FRACTION` | 0.25 | Fractional Kelly multiplier |
+| `MIN_EDGE` | 0.12 | Minimum model–market gap to enter |
+| `KELLY_FRACTION` | 0.10 | Fractional Kelly multiplier (live); 0.25 for paper |
 | `MAX_TRADE_USDC` | 15.0 | Hard per-trade dollar cap |
 | `MAX_DEPLOYED_FRACTION` | 0.40 | Max % of portfolio in open positions |
-| `NO_ENTRY_MIN_PRICE` | 0.20 | Skip NO bets below 20¢ |
+| `NO_ENTRY_MIN_PRICE` | 0.35 | Skip NO bets below 35¢ |
 | `NO_ENTRY_MAX_PRICE` | 0.75 | Skip NO bets above 75¢ |
 | `NO_MIN_ENSEMBLE_STD` | 0.8°C | Skip NO bets when models tightly agree |
 | `FORECAST_T_DF` | 4 | Student-t degrees of freedom (fat tails) |
@@ -182,6 +182,42 @@ sudo cp polybot.service /etc/systemd/system/
 sudo systemctl enable polybot
 sudo systemctl start polybot
 ```
+
+---
+
+## Paper → Live Migration
+
+After running in paper mode for calibration, use the included migration script to carry over learnings before switching to live trading. The two databases (`paper_trades.db` / `live_trades.db`) share an identical schema — only the calibration tables need to be ported.
+
+**What gets copied:**
+
+| Table | Rows (example) | Why |
+|-------|----------------|-----|
+| `stations` | 37 | City configs and station status |
+| `historical_obs` | ~7,000 | ASOS + ERA5 observed actuals (ground truth) |
+| `model_forecasts` | ~1,600 | Historical NWP predictions (needed to recompute bias) |
+| `bias_corrections` | ~36 | Per-city/model/month error corrections |
+| `climatology` | varies | 30-year WMO baselines |
+
+Trades, P&L, bankroll, and operational state start fresh in the live DB.
+
+**Migration steps:**
+
+```bash
+# 1. Freshen paper calibration one last time
+python main.py --backfill
+
+# 2. Copy learnings to live DB (backs up live DB automatically before overwriting)
+python migrate_paper_to_live.py
+
+# 3. Freshen model forecasts in live DB (~10 min)
+python main.py --backfill --live
+
+# 4. Switch daemon to live
+python daemon.py --mode live
+```
+
+**Bias corrections accumulate over time.** Run `python main.py --backfill` weekly to keep corrections fresh — the bias corrector uses exponential decay with a 180-day halflife, so the most recent observations carry the most weight. Run it immediately after any multi-day temperature anomaly (heatwave, cold snap) to recapture regime shifts.
 
 ---
 
