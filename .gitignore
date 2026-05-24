@@ -33,6 +33,7 @@ build/
 logs/
 *.log
 .locks/
+*.lock
 
 # === OS ===
 .DS_Store
