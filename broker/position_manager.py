@@ -297,7 +297,7 @@ def resolve_expired_trades(dry_run: bool = False) -> list[dict]:
                         trade["trade_id"][:8], trade.get("status"), new_outcome)
 
     open_trades = db.get_open_trades()
-    expired = [t for t in open_trades if str(t["target_date"]) < today]
+    expired = [t for t in open_trades if str(t["target_date"]) <= today]
 
     if not expired:
         logger.info("No expired trades to resolve.")

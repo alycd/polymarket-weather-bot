@@ -83,24 +83,40 @@ def job_status(job_id):
     return jsonify(_jobs.get(job_id, {"status": "unknown", "output": ""}))
 
 
-def _get_market_meta(clob_token: str) -> dict:
-    if clob_token in _slug_cache:
-        return _slug_cache[clob_token]
-    try:
-        r = _req.get("https://gamma-api.polymarket.com/markets",
-                     params={"clob_token_ids": clob_token}, timeout=6)
-        data = r.json()
-        if data:
-            m = data[0]
-            slug = m.get("slug", "")
-            events = m.get("events", [])
-            event_slug = events[0].get("slug", "") if events else ""
-            result = {"slug": slug, "event_slug": event_slug}
-            _slug_cache[clob_token] = result
-            return result
-    except Exception:
-        pass
-    return {"slug": "", "event_slug": ""}
+def _get_market_meta(clob_token: str, market_id: str = "") -> dict:
+    cache_key = clob_token or market_id
+    if cache_key in _slug_cache:
+        return _slug_cache[cache_key]
+    result = {"slug": "", "event_slug": "", "market_slug": ""}
+    # 1. Gamma (works while market is active/indexed)
+    if clob_token:
+        try:
+            r = _req.get("https://gamma-api.polymarket.com/markets",
+                         params={"clob_token_ids": clob_token}, timeout=6)
+            data = r.json()
+            if data:
+                m = data[0]
+                slug = m.get("slug", "")
+                events = m.get("events", [])
+                event_slug = events[0].get("slug", "") if events else ""
+                result = {"slug": slug, "event_slug": event_slug, "market_slug": slug}
+                _slug_cache[cache_key] = result
+                return result
+        except Exception:
+            pass
+    # 2. CLOB fallback (works for closed/archived markets)
+    if market_id:
+        try:
+            r = _req.get(f"https://clob.polymarket.com/markets/{market_id}", timeout=6)
+            if r.ok:
+                data = r.json()
+                market_slug = data.get("market_slug", "")
+                result = {"slug": market_slug, "event_slug": "", "market_slug": market_slug}
+                _slug_cache[cache_key] = result
+                return result
+        except Exception:
+            pass
+    return result
 
 
 def _enrich_trades(trades, db_path: str):
@@ -403,9 +419,10 @@ def price_history():
 @app.route("/api/market-meta")
 def market_meta():
     token = request.args.get("token", "")
-    if not token:
+    market_id = request.args.get("market_id", "")
+    if not token and not market_id:
         return jsonify({}), 400
-    return jsonify(_get_market_meta(token))
+    return jsonify(_get_market_meta(token, market_id))
 
 
 @app.route("/api/clob-balance")

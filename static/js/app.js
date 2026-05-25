@@ -377,9 +377,10 @@ function openModal(trade) {
   if (trade.clob_token_yes) {
     Promise.all([
       fetch('/api/price-history?token='+encodeURIComponent(trade.clob_token_yes)).then(r=>r.json()),
-      fetch('/api/market-meta?token='+encodeURIComponent(trade.clob_token_yes)).then(r=>r.json()),
+      fetch('/api/market-meta?token='+encodeURIComponent(trade.clob_token_yes)+'&market_id='+encodeURIComponent(trade.market_id||'')).then(r=>r.json()),
     ]).then(([hist, meta]) => {
-      if (meta.event_slug) document.getElementById('m-pm-link').href = 'https://polymarket.com/event/'+meta.event_slug+'/'+meta.slug;
+      const pmSlug = meta.event_slug ? meta.event_slug+'/'+meta.slug : meta.market_slug;
+      if (pmSlug) document.getElementById('m-pm-link').href = 'https://polymarket.com/event/'+pmSlug;
       const pts = hist.history || [];
       if (!pts.length) { cl.innerHTML = 'No price history available.'; return; }
       const last     = pts[pts.length-1].p;
