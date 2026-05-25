@@ -6,9 +6,9 @@ Python-3.12.10/
 *.key
 
 # === DATABASES (contain trading history / PII) ===
-*.db
-*.db-shm
-*.db-wal
+# *.db
+# *.db-shm
+# *.db-wal
 
 # === LARGE DATA FILES ===
 backtest_results.csv
