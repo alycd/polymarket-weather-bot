@@ -1125,48 +1125,45 @@ def cmd_exit_scan(dry_run=False):
         # ── Fetch live price ──────────────────────────────────────────────────
         market_stub = {"market_id": trade["market_id"],
                        "clob_token_yes": trade.get("clob_token_yes", "")}
+        price_ok = False
+        current_mid = None
+        exit_val = None
+        gain_multiple = None
         try:
             prices = get_market_prices(market_stub)
+            current_mid = prices.get("mid")
+            if current_mid is not None:
+                price_ok = True
+                db.record_price(trade["market_id"], current_mid)
+                if direction == "YES":
+                    exit_val = prices["bid"] if prices["bid"] is not None else current_mid
+                else:
+                    ask = prices["ask"]
+                    exit_val = (1.0 - ask) if ask is not None else (1.0 - current_mid)
+                gain_multiple = exit_val / entry_price if entry_price > 0 else 0
         except Exception as e:
             logger.debug("exit-scan: price fetch failed for %s: %s", trade_id[:8], e)
-            continue
-
-        current_mid = prices.get("mid")
-        if current_mid is None:
-            continue
-
-        db.record_price(trade["market_id"], current_mid)
-
-        # Current exit value per share (what we'd receive selling now)
-        if direction == "YES":
-            exit_val = prices["bid"] if prices["bid"] is not None else current_mid
-        else:
-            ask = prices["ask"]
-            exit_val = (1.0 - ask) if ask is not None else (1.0 - current_mid)
-
-        gain_multiple = exit_val / entry_price if entry_price > 0 else 0
 
         # ── Check exit conditions ─────────────────────────────────────────────
 
         reason = None
 
-        # 1. Take profit
-        if reason is None and gain_multiple >= TAKE_PROFIT_MULTIPLE:
+        # 1. Take profit (requires live price)
+        if reason is None and price_ok and gain_multiple >= TAKE_PROFIT_MULTIPLE:
             reason = f"TAKE-PROFIT {gain_multiple:.1f}x (entry={entry_price:.3f} now={exit_val:.3f})"
 
-        # 2. Edge reversal — use stored model_prob vs current market mid
-        if reason is None and model_prob is not None:
+        # 2. Edge reversal (requires live price)
+        if reason is None and price_ok and model_prob is not None:
             if direction == "YES":
                 current_edge = model_prob - current_mid
             else:
                 current_edge = current_mid - model_prob   # positive = NO still has edge
 
-            original_edge = abs(trade.get("edge") or 0)
             if current_edge < -EDGE_REVERSAL_MIN:
                 reason = (f"EDGE-REVERSED model={model_prob:.3f} market={current_mid:.3f} "
                           f"edge={current_edge:+.3f}")
 
-        # 3. Market closing soon
+        # 3. Market closing soon — runs regardless of price availability
         if reason is None and target_date:
             try:
                 td = date_type.fromisoformat(target_date)
@@ -1181,16 +1178,26 @@ def cmd_exit_scan(dry_run=False):
                 now_utc = datetime.now(timezone.utc)
                 hours_left = (utc_close - now_utc).total_seconds() / 3600
                 if 0 < hours_left < CLOSE_SOON_HOURS:
-                    reason = f"CLOSING-SOON {hours_left:.1f}h left (exit into remaining liquidity)"
+                    no_price_note = " (no live price — using entry as fallback)" if not price_ok else ""
+                    reason = f"CLOSING-SOON {hours_left:.1f}h left (exit into remaining liquidity){no_price_note}"
             except Exception:
                 pass
 
         if reason is None:
+            if not price_ok:
+                logger.warning("exit-scan: no price available for %s (%s) — skipping",
+                               trade_id[:8], city)
+                continue
             print(f"  {DIM}HOLD  {trade_id[:8]} | {city} {direction} "
                   f"entry={entry_price:.3f} now={exit_val:.3f} ({gain_multiple:.2f}x){RST}")
             continue
 
         # ── Execute exit ──────────────────────────────────────────────────────
+        # When no live price is available (CLOB gone near resolution), use entry_price
+        # as a conservative fallback so the exit can still be recorded and submitted.
+        if exit_val is None:
+            exit_val = entry_price
+
         shares = size / entry_price
         pnl_est = shares * exit_val - size
 
