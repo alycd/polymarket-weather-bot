@@ -539,7 +539,7 @@ TSA_FORECAST_STD_FRACTION = 0.05
 TSA_BUCKETS_M = [None, 2.0, 2.2, 2.4, 2.6, 2.8, None]  # None = open-ended
 
 # Cities to exclude from all trading (add city names exactly as they appear in CITIES keys).
-CITY_EXCLUDE: set[str] = {"Hong Kong", "Chengdu"}
+CITY_EXCLUDE: set[str] = {"Hong Kong", "Chengdu", "Wuhan"}
 
 # Inverted lookup: question keyword → city key
 CITY_ALIASES = {
