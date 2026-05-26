@@ -639,6 +639,16 @@ def get_weather_fallback_trades() -> list[dict]:
         ).fetchall()]
 
 
+def get_exit_scan_fallback_trades() -> list[dict]:
+    """Exit-scan-settled trades where no live price was available at exit time
+    (exit_price was set to entry_price as a fallback). These need re-verification
+    once PM settles so PnL can be corrected to the actual 1.0 / 0.0 settlement."""
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM trades WHERE outcome_source='exit_scan' AND exit_price=entry_price"
+        ).fetchall()]
+
+
 def update_trade_outcome(trade_id: str, new_outcome: str, outcome_source: str,
                          actual_high_c=None):
     """Correct the outcome of an already-resolved trade (e.g. PM overrides weather).

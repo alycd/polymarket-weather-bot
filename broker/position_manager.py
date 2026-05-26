@@ -296,6 +296,27 @@ def resolve_expired_trades(dry_run: bool = False) -> list[dict]:
             logger.info("[DRY RUN] Would correct trade %s: %s → %s",
                         trade["trade_id"][:8], trade.get("status"), new_outcome)
 
+    # ── Re-check exit-scan trades settled at entry_price (no-price fallback) ─
+    # When the CLOB orderbook is gone near resolution, exit_scan records the trade
+    # at entry_price (pnl=0). Once PM settles we can correct to the real 1.0/0.0.
+    exit_scan_fallback_trades = db.get_exit_scan_fallback_trades()
+    for trade in exit_scan_fallback_trades:
+        clob_token = _get_clob_token(trade)
+        pm_winner = _query_polymarket_outcome(clob_token, trade.get("market_id", ""))
+        if pm_winner is None:
+            continue
+        yes_won = (pm_winner == "yes")
+        direction = trade["direction"]
+        new_outcome = ("won" if yes_won else "lost") if direction == "YES" else ("won" if not yes_won else "lost")
+        logger.info("PM re-check corrected %s: exit_scan fallback → polymarket (%s → %s)",
+                    trade["trade_id"][:8], trade.get("status"), new_outcome)
+        if not dry_run:
+            db.update_trade_outcome(trade["trade_id"], new_outcome, "polymarket",
+                                    actual_high_c=trade.get("actual_high_c"))
+        else:
+            logger.info("[DRY RUN] Would correct trade %s: %s → %s",
+                        trade["trade_id"][:8], trade.get("status"), new_outcome)
+
     open_trades = db.get_open_trades()
     expired = [t for t in open_trades if str(t["target_date"]) < today]
 
