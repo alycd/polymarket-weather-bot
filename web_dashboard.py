@@ -412,7 +412,7 @@ def api_data():
 @app.route("/api/pnl-history")
 def pnl_history():
     try:
-        db.set_db_mode(request.args.get("mode", "paper"))
+        db.set_mode(request.args.get("mode", "paper"))
         return jsonify(db.get_daily_pnl())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
