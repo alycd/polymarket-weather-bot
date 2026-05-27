@@ -227,6 +227,7 @@ tbody tr.row-click:hover td { background: rgba(255,255,255,0.04); }
 .m-stat { display: flex; flex-direction: column; gap: 8px; }
 .m-stat-lbl { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .m-stat-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.equity-wrap { position: relative; height: 220px; padding: 16px 24px 20px; }
 .m-chart { padding: 32px 32px 16px; }
 .m-chart-lbl { font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; }
 .chart-wrap { position: relative; height: 300px; }

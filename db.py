@@ -753,6 +753,25 @@ def resolve_trade(trade_id, actual_high_c, outcome: str, exit_price: float,
         """, (outcome, actual_high_c, exit_price, pnl,
               datetime.utcnow().isoformat(), outcome_source, trade_id))
         conn.execute("UPDATE bankroll SET balance = balance + ? WHERE id=1", (bankroll_delta,))
+
+        # snapshot daily PnL
+        today = datetime.utcnow().date().isoformat()
+        starting = conn.execute("SELECT balance FROM bankroll WHERE id=1").fetchone()[0] - bankroll_delta
+        ending   = starting + bankroll_delta
+        is_win  = 1 if outcome == "won" else 0
+        is_loss = 1 if outcome in ("lost", "stop_loss") else 0
+        conn.execute("""
+            INSERT INTO daily_pnl
+                (pnl_date, starting_bankroll, ending_bankroll,
+                 trades_placed, trades_resolved, win_count, loss_count)
+            VALUES (?,?,?,0,1,?,?)
+            ON CONFLICT(pnl_date) DO UPDATE SET
+                ending_bankroll  = excluded.ending_bankroll,
+                trades_resolved  = trades_resolved + 1,
+                win_count        = win_count  + excluded.win_count,
+                loss_count       = loss_count + excluded.loss_count
+        """, (today, starting, ending, is_win, is_loss))
+
         return pnl
 
 

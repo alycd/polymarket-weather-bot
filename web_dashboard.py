@@ -307,6 +307,7 @@ def _build_polymarket_live_dashboard(db_path: str) -> dict:
         "history": rows_closed,
         "stations": stations,
         "ops": get_ops_snapshot(),
+        "pnl_history": db.get_daily_pnl(),
     }
 
 
@@ -371,6 +372,7 @@ def _build_data(mode: str) -> dict:
         "history": history,
         "stations": stations,
         "ops": get_ops_snapshot(),
+        "pnl_history": db.get_daily_pnl(),
     }
 
 
@@ -405,6 +407,15 @@ def api_data():
                 d["stale_error"] = str(e)
                 return jsonify(d)
             return jsonify({"error": str(e), "traceback": tb}), 500
+
+
+@app.route("/api/pnl-history")
+def pnl_history():
+    try:
+        db.set_db_mode(request.args.get("mode", "paper"))
+        return jsonify(db.get_daily_pnl())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/price-history")

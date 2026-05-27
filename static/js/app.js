@@ -342,6 +342,67 @@ function renderStations(st) {
     <tbody>${rows}</tbody></table></div>`;
 }
 
+// ── equity curve ──────────────────────────────────────────────────────────────
+let _equityChart = null;
+function renderEquity(rows) {
+  const card = document.getElementById('equity-card');
+  if (!rows || !rows.length) {
+    card.querySelector('.equity-wrap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:14px">No resolved trades yet</div>';
+    return;
+  }
+  const labels   = rows.map(r => r.pnl_date.slice(5));   // MM-DD
+  const bankroll = rows.map(r => r.ending_bankroll);
+  const cumPnl   = (() => {
+    const start = rows[0].starting_bankroll;
+    return rows.map(r => +(r.ending_bankroll - start).toFixed(2));
+  })();
+  const lastPnl  = cumPnl[cumPnl.length - 1];
+  const hint = document.getElementById('equity-hint');
+  if (hint) hint.textContent = (lastPnl >= 0 ? '+$' : '-$') + Math.abs(lastPnl).toFixed(2) + ' cumulative';
+
+  const canvas = document.getElementById('equity-chart');
+  const ctx = canvas.getContext('2d');
+  if (_equityChart) { _equityChart.destroy(); _equityChart = null; }
+
+  const brGrad = ctx.createLinearGradient(0, 0, 0, 220);
+  brGrad.addColorStop(0, 'rgba(99,102,241,0.25)');
+  brGrad.addColorStop(1, 'rgba(99,102,241,0)');
+  const pnlColor = lastPnl >= 0 ? '#4ade80' : '#f87171';
+  const pnlGrad = ctx.createLinearGradient(0, 0, 0, 220);
+  pnlGrad.addColorStop(0, lastPnl >= 0 ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)');
+  pnlGrad.addColorStop(1, 'rgba(0,0,0,0)');
+
+  _equityChart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: 'Bankroll', data: bankroll, borderColor: '#6366f1', backgroundColor: brGrad,
+        borderWidth: 2, pointRadius: 2, fill: true, tension: 0.3, yAxisID: 'yB' },
+      { label: 'Cum PnL',  data: cumPnl,  borderColor: pnlColor,  backgroundColor: pnlGrad,
+        borderWidth: 2, pointRadius: 2, fill: true, tension: 0.3, yAxisID: 'yP' },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 600, easing: 'easeOutQuart' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#888', font: { size: 12, family: 'Inter' }, boxWidth: 12, padding: 16 } },
+        tooltip: { backgroundColor: '#111', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
+          titleColor: '#888', bodyColor: '#fff', padding: 12, cornerRadius: 12,
+          titleFont: { size: 12, family: 'Inter' }, bodyFont: { size: 13, family: 'Inter', weight: '600' },
+          callbacks: { label: c => ' ' + c.dataset.label + ': $' + c.parsed.y.toFixed(2) } },
+      },
+      scales: {
+        x: { ticks: { color: '#555', maxTicksLimit: 8, font: { size: 11, family: 'Inter' } },
+             grid: { color: 'rgba(255,255,255,0.03)' }, border: { color: 'transparent' } },
+        yB: { position: 'left',  ticks: { color: '#6366f1', font: { size: 11, family: 'Inter' }, callback: v => '$' + v.toFixed(0) },
+              grid: { color: 'rgba(255,255,255,0.03)' }, border: { color: 'transparent' } },
+        yP: { position: 'right', ticks: { color: pnlColor,  font: { size: 11, family: 'Inter' }, callback: v => (v>=0?'+$':'-$') + Math.abs(v).toFixed(0) },
+              grid: { drawOnChartArea: false }, border: { color: 'transparent' } },
+      },
+    },
+  });
+}
+
 function _fmtIso(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toISOString().slice(11,19) + 'Z'; } catch { return '—'; }
@@ -530,6 +591,7 @@ function load(force) {
       renderPositions(d.positions || []);
       renderExposure(d.positions || [], d.history || []);
       renderHistory(d.history || []);
+      renderEquity(d.pnl_history || []);
       renderStations(d.stations || []);
       renderOps(d.ops || {});
       if (_mode === 'live' && firstRender) refreshClobBalance();
