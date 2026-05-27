@@ -204,15 +204,27 @@ function renderPositions(pos) {
 }
 
 // ── exposure ──────────────────────────────────────────────────────────────────
-function renderExposure(pos) {
+function renderExposure(pos, hist) {
   const card = document.getElementById('exp-card');
   const by = {}; let total = 0;
+
+  // open positions — exposure & YES/NO split
   pos.forEach(p => {
-    if (!by[p.city]) by[p.city]={amt:0,yes:0,no:0};
+    if (!by[p.city]) by[p.city]={amt:0,yes:0,no:0,w:0,l:0};
     by[p.city].amt += p.size_usdc;
     by[p.city][p.direction==='YES'?'yes':'no']++;
     total += p.size_usdc;
   });
+
+  // closed history — win/loss per city
+  (hist||[]).forEach(t => {
+    const key = t.city;
+    if (!key) return;
+    if (!by[key]) by[key]={amt:0,yes:0,no:0,w:0,l:0};
+    if (t.status==='won')  by[key].w++;
+    else if (t.status==='lost'||t.status==='stop_loss') by[key].l++;
+  });
+
   const sorted = Object.entries(by).sort((a,b) => b[1].amt - a[1].amt);
   if (!sorted.length) {
     card.innerHTML = '<div class="card-hdr"><span class="card-title glow-text">Exposure</span></div><div class="empty">—</div>';
@@ -222,10 +234,13 @@ function renderExposure(pos) {
     const pct = total>0 ? s.amt/total*100 : 0;
     const t2  = s.yes + s.no;
     const yp  = t2>0 ? s.yes/t2*100 : 50;
-    const ynLabel = `<span class="a">${s.yes}Y</span><span class="md"> · </span><span class="p">${s.no}N</span>`;
+    const wlTotal = s.w + s.l;
+    const wlLabel = wlTotal > 0
+      ? `<span style="color:#4ade80;font-weight:700">${s.w}</span><span style="color:var(--text-muted)">-</span><span style="color:#f87171;font-weight:700">${s.l}</span>`
+      : `<span style="color:var(--text-muted);font-size:10px">—</span>`;
     return `<div class="exp-row slide-up" style="animation-delay: ${i*0.05}s">
       <span class="exp-city" title="${city}">${city}</span>
-      <span class="exp-amt mono" style="font-size:11px">${ynLabel}</span>
+      <span class="exp-amt mono" style="font-size:12px;text-align:center">${wlLabel}</span>
       <div class="exp-bar">
         <div class="exp-bar-y" style="width:${yp.toFixed(0)}%;"></div>
         <div class="exp-bar-n" style="width:${(100-yp).toFixed(0)}%;"></div>
@@ -513,7 +528,7 @@ function load(force) {
       renderHero(d);
       renderPills(d);
       renderPositions(d.positions || []);
-      renderExposure(d.positions || []);
+      renderExposure(d.positions || [], d.history || []);
       renderHistory(d.history || []);
       renderStations(d.stations || []);
       renderOps(d.ops || {});

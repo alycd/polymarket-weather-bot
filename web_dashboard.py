@@ -223,7 +223,11 @@ def _build_polymarket_live_dashboard(db_path: str) -> dict:
 
     closed_sorted = sorted(
         raw_closed,
-        key=lambda x: int(x.get("timestamp") or 0),
+        key=lambda x: (
+            int(x.get("timestamp") or 0)
+            or int(x.get("closedAt") or 0)
+            or str(x.get("endDate") or "")
+        ),
         reverse=True,
     )
     rows_closed = []
