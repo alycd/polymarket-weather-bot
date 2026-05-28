@@ -210,19 +210,20 @@ function renderExposure(pos, hist) {
 
   // open positions — exposure & YES/NO split
   pos.forEach(p => {
-    if (!by[p.city]) by[p.city]={amt:0,yes:0,no:0,w:0,l:0};
+    if (!by[p.city]) by[p.city]={amt:0,yes:0,no:0,w:0,l:0,pnl:0};
     by[p.city].amt += p.size_usdc;
     by[p.city][p.direction==='YES'?'yes':'no']++;
     total += p.size_usdc;
   });
 
-  // closed history — win/loss per city
+  // closed history — win/loss + realized PnL per city
   (hist||[]).forEach(t => {
     const key = t.city;
     if (!key) return;
-    if (!by[key]) by[key]={amt:0,yes:0,no:0,w:0,l:0};
+    if (!by[key]) by[key]={amt:0,yes:0,no:0,w:0,l:0,pnl:0};
     if (t.status==='won')  by[key].w++;
     else if (t.status==='lost'||t.status==='stop_loss') by[key].l++;
+    by[key].pnl += (t.pnl || 0);
   });
 
   const sorted = Object.entries(by).sort((a,b) => b[1].amt - a[1].amt);
@@ -238,9 +239,14 @@ function renderExposure(pos, hist) {
     const wlLabel = wlTotal > 0
       ? `<span style="color:#4ade80;font-weight:700">${s.w}</span><span style="color:var(--text-muted)">-</span><span style="color:#f87171;font-weight:700">${s.l}</span>`
       : `<span style="color:var(--text-muted);font-size:10px">—</span>`;
+    const pnlColor = s.pnl > 0 ? '#4ade80' : s.pnl < 0 ? '#f87171' : 'var(--text-muted)';
+    const pnlLabel = wlTotal > 0
+      ? `<span style="color:${pnlColor};font-weight:700">${s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(0)}</span>`
+      : `<span style="color:var(--text-muted);font-size:10px">—</span>`;
     return `<div class="exp-row slide-up" style="animation-delay: ${i*0.05}s">
       <span class="exp-city" title="${city}">${city}</span>
       <span class="exp-amt mono" style="font-size:12px;text-align:center">${wlLabel}</span>
+      <span class="exp-amt mono" style="font-size:12px;text-align:right">${pnlLabel}</span>
       <div class="exp-bar">
         <div class="exp-bar-y" style="width:${yp.toFixed(0)}%;"></div>
         <div class="exp-bar-n" style="width:${(100-yp).toFixed(0)}%;"></div>
