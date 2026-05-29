@@ -17,7 +17,7 @@ from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, ".")
-from config import CITIES, OPENMETEO_MODELS
+from config_active import CITIES, OPENMETEO_MODELS
 from data.openmeteo import fetch_historical_actuals
 
 logging.basicConfig(level=logging.WARNING)

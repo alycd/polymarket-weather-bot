@@ -22,7 +22,7 @@ from scipy.stats import norm
 
 # ── Config import ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
-import config as cfg
+import config_active as cfg
 
 # ── Simulation parameters ──────────────────────────────────────────────────────
 N_TRIALS = 500          # Monte Carlo trials per (city, date)

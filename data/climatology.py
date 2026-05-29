@@ -11,7 +11,7 @@ Model: ERA5 reanalysis (1940–present), globally available, free, no auth.
 import logging
 import math
 import requests
-from config import CLIMATE_API_URL
+from config_active import CLIMATE_API_URL
 
 logger = logging.getLogger(__name__)
 

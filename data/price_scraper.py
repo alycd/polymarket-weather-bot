@@ -14,7 +14,7 @@ from datetime import datetime, date
 import requests
 
 import db
-from config import GAMMA_API, CLOB_API, CITIES
+from config_active import GAMMA_API, CLOB_API, CITIES
 from data.polymarket import parse_question, parse_clob_tokens
 
 logger = logging.getLogger(__name__)

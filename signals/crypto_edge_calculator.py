@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from scipy.stats import norm
 
-from config import (MIN_EDGE, KELLY_FRACTION, MAX_TRADE_FRACTION,
+from config_active import (MIN_EDGE, KELLY_FRACTION, MAX_TRADE_FRACTION,
                     MIN_EDGE_RECENT_MULTIPLIER, MIN_EDGE_RECENT_DAYS,
                     HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT)
 

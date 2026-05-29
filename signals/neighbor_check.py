@@ -15,7 +15,7 @@ per scan run.
 """
 import logging
 import requests
-from config import (
+from config_active import (
     OPENMETEO_MODELS, NEIGHBOR_REFS,
     NEIGHBOR_DIVERGENCE_C, NEIGHBOR_PENALTY_MULT,
 )

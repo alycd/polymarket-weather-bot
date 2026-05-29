@@ -15,7 +15,7 @@ from functools import lru_cache
 
 import requests
 
-from config import TSA_DATA_URL, TSA_HOLIDAY_PERIODS
+from config_active import TSA_DATA_URL, TSA_HOLIDAY_PERIODS
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ def forecast_passengers(
             "data_points":     int,     # how many historical obs drove DOW baseline
         }
     """
-    from config import TSA_FORECAST_STD_FRACTION
+    from config_active import TSA_FORECAST_STD_FRACTION
 
     if dow_baselines is None:
         dow_baselines = compute_dow_baselines(data)

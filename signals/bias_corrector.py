@@ -10,7 +10,7 @@ import logging
 import math
 from collections import defaultdict
 from datetime import date as _date, datetime
-from config import (
+from config_active import (
     MIN_HISTORY_DAYS, OPENMETEO_MODELS, CITY_FORECAST_BIAS_C,
     PERSISTENCE_BIAS_WEIGHT, MIN_PERSISTENCE_DAYS
 )
@@ -189,7 +189,7 @@ def apply_bias(icao: str, model_name: str, predicted_high_c: float,
 
 def _apply_city_bias(icao: str, corrected: dict[str, float]) -> dict[str, float]:
     """Apply per-city additive bias from CITY_FORECAST_BIAS_C (config) if present."""
-    from config import CITIES
+    from config_active import CITIES
     city = next((c for c, cfg in CITIES.items() if cfg["icao"] == icao), None)
     if city and city in CITY_FORECAST_BIAS_C:
         bias = CITY_FORECAST_BIAS_C[city]

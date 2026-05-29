@@ -23,7 +23,7 @@ exponentially with the age of each model's most recent available cycle.
 import math
 import logging
 from datetime import date as _date
-from config import ENSEMBLE_STD_MIN, ENSEMBLE_STD_MAX, BASE_FORECAST_STD_C, KING_CONFLICT_MAX_C
+from config_active import ENSEMBLE_STD_MIN, ENSEMBLE_STD_MAX, BASE_FORECAST_STD_C, KING_CONFLICT_MAX_C
 from signals.model_freshness import get_freshness_weights as _get_freshness_weights
 
 logger = logging.getLogger(__name__)

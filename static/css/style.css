@@ -164,12 +164,11 @@ tbody tr.row-click:hover td { background: rgba(255,255,255,0.04); }
 .b-ready{ background: rgba(255,255,255,0.1); color: var(--text-main); border: 1px solid var(--border); }
 .b-warmup{ background: rgba(255,184,0,0.1); color: var(--amber); border: 1px solid rgba(255,184,0,0.2); }
 
-.exp-row { display: grid; grid-template-columns: 1fr 52px 56px 80px 44px; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); transition: 0.2s; align-items: center; }
+.exp-row { display: grid; grid-template-columns: 1fr 52px 56px 44px; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); transition: 0.2s; align-items: center; }
 .exp-row:hover { background: rgba(255,255,255,0.02); }
 .exp-row:last-child { border-bottom: none; }
 .exp-city { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .exp-amt { font-size: 13px; color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; }
-.exp-bar { height: 6px; border-radius: 3px; overflow: hidden; display: flex; background: rgba(255,255,255,0.1); }
 .exp-pct { font-size: 13px; color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .empty { padding: 48px 0; text-align: center; color: var(--text-dim); font-size: 14px; }

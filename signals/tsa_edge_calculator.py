@@ -18,7 +18,7 @@ from datetime import date as _date, timedelta
 
 from scipy.stats import norm
 
-from config import (
+from config_active import (
     MIN_EDGE, KELLY_FRACTION, MAX_TRADE_FRACTION,
     TSA_HUB_AIRPORTS, TSA_HUB_BAD_WEATHER_MIN_COUNT,
     TSA_WEATHER_DROP_PER_HUB, TSA_BAD_WEATHER_PRECIP_MM, TSA_BAD_WEATHER_WIND_KMH,
@@ -43,7 +43,7 @@ def check_hub_weather(target_date: str) -> dict:
         }
     """
     import requests
-    from config import OPENMETEO_MODELS
+    from config_active import OPENMETEO_MODELS
 
     url = OPENMETEO_MODELS.get("gfs", "https://api.open-meteo.com/v1/gfs")
     bad_hubs = []
