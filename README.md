@@ -165,6 +165,22 @@ python main.py --exit-scan --live
 
 # Resolve settled markets and update P&L
 python main.py --resolve --live
+```
+
+**`--scan` vs `--exit-scan`**
+
+These do fundamentally different things:
+
+- **`--scan`** finds and enters new positions — fetches open markets, runs the full signal pipeline (NWP models → ensemble → edge calculation), applies entry filters, sizes and executes trades.
+
+- **`--exit-scan`** manages existing positions — loops over all open trades, fetches live prices, and exits early if any of these conditions are met:
+  1. **Take profit** — position is worth 3× entry cost
+  2. **Edge reversal** — market has moved so much the edge has flipped >0.10 against us
+  3. **Closing soon** — market resolves within 2 hours
+
+In the daemon, `--scan` runs at 4 fixed UTC times plus every 30 minutes opportunistically; `--exit-scan` runs every 30 minutes as a risk management check.
+
+```bash
 
 # Web dashboard (port 5001)
 python web_dashboard.py
