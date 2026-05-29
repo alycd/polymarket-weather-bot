@@ -23,4 +23,4 @@ MAX_CITY_DATE_FRACTION   = 0.15
 MIN_MARKET_VOLUME_USDC   = 500.0
 
 # ── City exclusions ───────────────────────────────────────────────────────────
-CITY_EXCLUDE: set[str] = {"Hong Kong", "Buenos Aires", "Warsaw", "Chengdu", "Wuhan", "Ankara", "San Francisco"}
+CITY_EXCLUDE: set[str] = {"Hong Kong", "Buenos Aires", "Warsaw", "Chengdu", "Wuhan", "Ankara", "San Francisco", "Seoul"}
