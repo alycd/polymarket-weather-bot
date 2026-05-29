@@ -15,7 +15,7 @@ import logging
 import math
 from datetime import datetime, date
 import pytz
-from config import CITIES
+from config_active import CITIES
 from data.noaa import get_running_max_today, fetch_metar
 from data.wunderground import get_running_max_wu
 
@@ -143,7 +143,7 @@ def compute_nowcast_bucket_prob(
                          temp_rate_c_per_h, confidence)
 
     from scipy.stats import t as _t
-    from config import FORECAST_T_DF
+    from config_active import FORECAST_T_DF
 
     # Convert bucket to °C if needed (caller handles unit conversion before calling)
     lo = bucket_lo_c if bucket_lo_c is not None else -999.0

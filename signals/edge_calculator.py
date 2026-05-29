@@ -15,7 +15,7 @@ import logging
 import math
 import time as _time
 from scipy.stats import t as _t
-from config import MIN_EDGE, CITIES, HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT, FORECAST_T_DF, NO_ENTRY_MIN_PRICE, NO_ENTRY_MAX_PRICE, NO_MIN_ENSEMBLE_STD
+from config_active import MIN_EDGE, CITIES, HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT, FORECAST_T_DF, NO_ENTRY_MIN_PRICE, NO_ENTRY_MAX_PRICE, NO_MIN_ENSEMBLE_STD
 from signals.ensemble import compute_ensemble_stats
 from signals.nowcaster import nowcast_confidence, get_running_max_c, compute_nowcast_bucket_prob
 
@@ -208,7 +208,7 @@ def compute_edge(
 
     Returns a signal dict, or None if the market should be skipped.
     """
-    from config import (MIN_EDGE, MAX_TRADE_FRACTION, KELLY_FRACTION as KF, CITIES,
+    from config_active import (MIN_EDGE, MAX_TRADE_FRACTION, KELLY_FRACTION as KF, CITIES,
                     MIN_EDGE_RECENT_MULTIPLIER, MIN_EDGE_RECENT_DAYS)
     import db
 
@@ -462,7 +462,7 @@ def compute_edge(
     # Filter: require minimum win probability after shrinkage.
     # NO trades: calibration shows 80-90% p_win bucket wins only 45.5% of the time.
     # YES trades: use a lower bar — 55%+ model confidence with >25¢ edge is tradeable.
-    from config import MIN_WIN_PROB, MIN_WIN_PROB_YES
+    from config_active import MIN_WIN_PROB, MIN_WIN_PROB_YES
     threshold = MIN_WIN_PROB_YES if direction == "YES" else MIN_WIN_PROB
     if p_win < threshold:
         logger.debug("p_win %.3f below threshold %.3f (%s) — skip", p_win, threshold, direction)

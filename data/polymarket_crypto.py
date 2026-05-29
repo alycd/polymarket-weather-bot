@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from config import GAMMA_API, CLOB_API
+from config_active import GAMMA_API, CLOB_API
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 15

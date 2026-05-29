@@ -7,7 +7,7 @@ import logging
 import time
 import requests
 from datetime import date, timedelta
-from config import (OPENMETEO_MODELS, OPENMETEO_ARCHIVE_URL,
+from config_active import (OPENMETEO_MODELS, OPENMETEO_ARCHIVE_URL,
                     OPENMETEO_MODEL_PARAMS,
                     HRRR_LAT_MIN, HRRR_LAT_MAX, HRRR_LON_MIN, HRRR_LON_MAX)
 

@@ -7,7 +7,7 @@ import json
 import logging
 import requests
 from datetime import datetime, date
-from config import GAMMA_API, CLOB_API, CITY_ALIASES, MIN_MARKET_VOLUME_USDC
+from config_active import GAMMA_API, CLOB_API, CITY_ALIASES, MIN_MARKET_VOLUME_USDC
 
 logger = logging.getLogger(__name__)
 

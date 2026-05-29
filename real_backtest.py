@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import requests
 
 import db
-from config import (
+from config_active import (
     CITIES, OPENMETEO_MODELS, OPENMETEO_ARCHIVE_URL,
     GAMMA_API, CLOB_API, CITY_ALIASES,
     MIN_EDGE, BASE_FORECAST_STD_C,
@@ -375,7 +375,7 @@ def process_market(market: dict, forecasts_cache: dict, actuals_cache: dict,
         return None
 
     # Apply stricter edge for very recent markets (days_ago <= 7)
-    from config import MIN_EDGE_RECENT_MULTIPLIER, MIN_EDGE_RECENT_DAYS
+    from config_active import MIN_EDGE_RECENT_MULTIPLIER, MIN_EDGE_RECENT_DAYS
     min_edge_threshold = (MIN_EDGE * MIN_EDGE_RECENT_MULTIPLIER
                           if days_ago <= MIN_EDGE_RECENT_DAYS else MIN_EDGE)
     if abs(edge_raw) < min_edge_threshold:

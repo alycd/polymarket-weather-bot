@@ -21,7 +21,7 @@ from datetime import date, timedelta
 from data.wunderground import get_historical_high, WundergroundError
 from data.noaa import fetch_asos_daily_max
 from data.openmeteo import fetch_historical_actuals
-from config import CITIES
+from config_active import CITIES
 import db
 from telegram import send_telegram_notification
 

@@ -10,7 +10,7 @@ from datetime import datetime, date
 
 import requests
 
-from config import GAMMA_API, CLOB_API
+from config_active import GAMMA_API, CLOB_API
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ def fetch_tsa_markets() -> list[dict]:
         target_date, bucket_lo, bucket_hi, bucket_unit,
         volume_usdc
     """
-    from config import MIN_MARKET_VOLUME_USDC
+    from config_active import MIN_MARKET_VOLUME_USDC
 
     # Paginate through all active markets (same pattern as temperature markets)
     all_markets = []

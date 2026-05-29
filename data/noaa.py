@@ -14,7 +14,7 @@ import logging
 import requests
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-from config import ASOS_URL, METAR_URL
+from config_active import ASOS_URL, METAR_URL
 from data.utils import retry
 
 logger = logging.getLogger(__name__)

@@ -233,8 +233,6 @@ function renderExposure(pos, hist) {
   }
   const rows = sorted.map(([city,s], i) => {
     const pct = total>0 ? s.amt/total*100 : 0;
-    const t2  = s.yes + s.no;
-    const yp  = t2>0 ? s.yes/t2*100 : 50;
     const wlTotal = s.w + s.l;
     const wlLabel = wlTotal > 0
       ? `<span style="color:#4ade80;font-weight:700">${s.w}</span><span style="color:var(--text-muted)">-</span><span style="color:#f87171;font-weight:700">${s.l}</span>`
@@ -247,10 +245,6 @@ function renderExposure(pos, hist) {
       <span class="exp-city" title="${city}">${city}</span>
       <span class="exp-amt mono" style="font-size:12px;text-align:center">${wlLabel}</span>
       <span class="exp-amt mono" style="font-size:12px;text-align:right">${pnlLabel}</span>
-      <div class="exp-bar">
-        <div class="exp-bar-y" style="width:${yp.toFixed(0)}%;"></div>
-        <div class="exp-bar-n" style="width:${(100-yp).toFixed(0)}%;"></div>
-      </div>
       <span class="exp-pct">${pct.toFixed(0)}%</span>
     </div>`;
   }).join('');

@@ -5,7 +5,7 @@ Money is fake. Prices are real.
 import uuid
 import logging
 from datetime import datetime
-from config import CITIES, MAX_DEPLOYED_FRACTION
+from config_active import CITIES, MAX_DEPLOYED_FRACTION
 import db
 from data.polymarket import get_market_prices
 from telegram import send_telegram_notification
@@ -85,7 +85,7 @@ def execute_paper_trade(
     bankroll = db.get_bankroll()
     size = signal["size_usdc"]
     # Hard dollar cap — prevents over-sizing when bankroll grows large
-    from config import MAX_TRADE_USDC
+    from config_active import MAX_TRADE_USDC
     if size > MAX_TRADE_USDC:
         size = MAX_TRADE_USDC
     if size < 0.50:

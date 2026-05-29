@@ -357,7 +357,7 @@ def print_calibration():
 
 
 def print_cities():
-    from config import CITIES
+    from config_active import CITIES
     stations = db.get_all_stations()
     status_map = {s["icao"]: s for s in stations}
 

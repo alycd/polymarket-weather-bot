@@ -34,7 +34,7 @@ logging.basicConfig(level=logging.WARNING)
 sys.path.insert(0, os.path.dirname(__file__))
 
 import db
-from config import CITIES, OPENMETEO_MODELS, MIN_EDGE, MAX_TRADE_USDC, BASE_FORECAST_STD_C, KELLY_FRACTION
+from config_active import CITIES, OPENMETEO_MODELS, MIN_EDGE, MAX_TRADE_USDC, BASE_FORECAST_STD_C, KELLY_FRACTION
 from data.openmeteo import fetch_historical_actuals
 from signals.bias_corrector import get_corrected_ensemble, station_is_ready
 from signals.edge_calculator import bucket_bounds_to_celsius, model_prob_for_bucket

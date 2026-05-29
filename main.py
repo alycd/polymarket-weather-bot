@@ -26,7 +26,7 @@ import logging
 import os
 import sys
 from datetime import date, timedelta
-from config import CITIES, CITY_EXCLUDE, BACKFILL_DAYS, MIN_HISTORY_DAYS, OPENMETEO_MODELS, HRRR_LAT_MIN, HRRR_LAT_MAX, HRRR_LON_MIN, HRRR_LON_MAX
+from config_active import CITIES, CITY_EXCLUDE, BACKFILL_DAYS, MIN_HISTORY_DAYS, OPENMETEO_MODELS, HRRR_LAT_MIN, HRRR_LAT_MAX, HRRR_LON_MIN, HRRR_LON_MAX
 import db
 
 LOCK_FILE = os.path.join(os.path.dirname(__file__), "polymarket_bot.lock")
@@ -321,7 +321,7 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
     # Opportunistic mode guardrails: only run if there's meaningful free capital,
     # book isn't already overly crowded, and we're outside cooldown.
     if opportunistic:
-        from config import (
+        from config_active import (
             OPPORTUNISTIC_MIN_FREE_BANKROLL_USDC,
             OPPORTUNISTIC_COOLDOWN_MINUTES,
             OPPORTUNISTIC_MAX_OPEN_TRADES,
@@ -404,7 +404,7 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
         sys.exit(1)
     print(f"  {G}✓ {len(markets)} temperature markets{RST}\n")
     if opportunistic:
-        from config import OPPORTUNISTIC_MIN_MARKETS
+        from config_active import OPPORTUNISTIC_MIN_MARKETS
         if len(markets) < OPPORTUNISTIC_MIN_MARKETS:
             print(f"  {DIM}Skipping opportunistic trading pass: only {len(markets)} markets "
                   f"(min {OPPORTUNISTIC_MIN_MARKETS}){RST}\n")
@@ -670,7 +670,7 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
             # Per-city daily cap: all bets for the same city+date share the same
             # underlying temperature outcome. Cap total deployed to MAX_CITY_DATE_FRACTION
             # to prevent one bad city day from causing an outsized correlated loss.
-            from config import MAX_CITY_DATE_FRACTION
+            from config_active import MAX_CITY_DATE_FRACTION
             _city_date_deployed = sum(
                 t["size_usdc"] for t in _open_trades
                 if t["city"] == city and str(t["target_date"]) == target_date
