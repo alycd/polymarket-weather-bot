@@ -7,7 +7,7 @@ from config import *  # noqa: F401, F403
 # ── Trading thresholds ────────────────────────────────────────────────────────
 MIN_EDGE              = 0.12
 MIN_WIN_PROB          = 0.70
-MIN_WIN_PROB_YES      = 0.52
+MIN_WIN_PROB_YES      = 0.60
 NO_ENTRY_MIN_PRICE    = 0.35
 NO_ENTRY_MAX_PRICE    = 0.75
 NO_MIN_ENSEMBLE_STD   = 0.8
@@ -23,4 +23,4 @@ MAX_CITY_DATE_FRACTION   = 0.15
 MIN_MARKET_VOLUME_USDC   = 500.0
 
 # ── City exclusions ───────────────────────────────────────────────────────────
-CITY_EXCLUDE: set[str] = {"Hong Kong", "Buenos Aires", "Warsaw", "Chengdu", "Wuhan", "Ankara", "San Francisco", "Seoul", "Tokyo"}
+CITY_EXCLUDE: set[str] = {"Hong Kong", "Buenos Aires", "Warsaw", "Chengdu", "Wuhan", "Ankara", "San Francisco", "Seoul", "Tokyo", "Munich", "Taipei", "Chongqing"}

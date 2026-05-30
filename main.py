@@ -1363,13 +1363,15 @@ def main():
                         help="Backfill hourly CLOB price history for all temp markets")
     args = parser.parse_args()
 
+    # --live implies --mode live (and vice versa)
+    if args.live:
+        args.mode = "live"
+    if args.mode == "live":
+        args.live = True
+
     # Switch DB before init — live mode uses live_trades.db
     db.set_mode(args.mode)
     db.init_db()
-
-    # --mode live implies --live (real order submission)
-    if args.mode == "live":
-        args.live = True
 
     if args.scan_crypto:
         cmd_scan_crypto(dry_run=args.dry_run)
