@@ -39,10 +39,11 @@ def parse_question(question: str) -> dict | None:
     """
     q = question.lower()
 
-    # Find city
+    # Find city — use word-boundary match so short aliases like "la" don't fire
+    # inside multi-word city names like "kuala lumpur".
     city = None
     for alias, canonical in sorted(CITY_ALIASES.items(), key=lambda x: -len(x[0])):
-        if alias in q:
+        if re.search(r'\b' + re.escape(alias) + r'\b', q):
             city = canonical
             break
     if not city:
