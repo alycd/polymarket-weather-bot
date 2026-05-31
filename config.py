@@ -549,11 +549,9 @@ CITY_ALIASES = {
     # More US cities
     "houston":       "Houston",
     "los angeles":   "Los Angeles",
-    "la":            "Los Angeles",
     "denver":        "Denver",
     "austin":        "Austin",
     "san francisco": "San Francisco",
-    "sf":            "San Francisco",
     # Asia
     "seoul":         "Seoul",
     "tokyo":         "Tokyo",
