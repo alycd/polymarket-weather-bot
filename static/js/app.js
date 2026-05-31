@@ -613,8 +613,10 @@ setInterval(() => {
 
 
 // ── action buttons ────────────────────────────────────────────────────────────
-var _ICONS = {scan:'⚡', resolve:'✓'};
+var _ICONS = {scan:'⚡', resolve:'✓', backfill:'⊙'};
 var _polls  = {};
+// Commands whose job_id survives page reload via localStorage
+var _PERSISTENT_CMDS = {backfill: 'backfill_job_id'};
 
 function showToast(text, err) {
   var t = document.getElementById('job-toast');
@@ -633,16 +635,31 @@ function hideToast() {
   if (t) t.classList.remove('show');
 }
 
-function runCmd(cmd) {
+function _setBtnRunning(cmd) {
   var btn=document.getElementById('btn-'+cmd), icon=document.getElementById(cmd+'-icon');
+  if (!btn) return;
   btn.disabled = true; btn.classList.add('running');
   icon.innerHTML = '';
   icon.classList.add('spin-neon');
+}
+
+function runCmd(cmd) {
   hideToast();
+  _setBtnRunning(cmd);
   fetch('/api/run/'+cmd+'?mode='+_mode, {method:'POST'})
-    .then(r=>r.json())
-    .then(d => { if(d.error){finishBtn(cmd,false,d.error);return;} pollJob(cmd,d.job_id); })
-    .catch(e => finishBtn(cmd,false,String(e)));
+    .then(r => r.json().then(d => ({status: r.status, body: d})))
+    .then(({status, body}) => {
+      if (status === 409 && body.job_id) {
+        // Already running — reconnect to the existing job
+        if (_PERSISTENT_CMDS[cmd]) localStorage.setItem(_PERSISTENT_CMDS[cmd], body.job_id);
+        pollJob(cmd, body.job_id);
+        return;
+      }
+      if (body.error) { finishBtn(cmd, false, body.error); return; }
+      if (_PERSISTENT_CMDS[cmd]) localStorage.setItem(_PERSISTENT_CMDS[cmd], body.job_id);
+      pollJob(cmd, body.job_id);
+    })
+    .catch(e => finishBtn(cmd, false, String(e)));
 }
 
 function pollJob(cmd, jobId) {
@@ -652,6 +669,7 @@ function pollJob(cmd, jobId) {
       .then(r=>r.json())
       .then(d => {
         if(d.status==='running'){pollJob(cmd,jobId);return;}
+        if (_PERSISTENT_CMDS[cmd]) localStorage.removeItem(_PERSISTENT_CMDS[cmd]);
         finishBtn(cmd, d.status==='done', d.output||'');
         if(d.status==='done') setTimeout(()=>load(true), 800);
       })
@@ -661,12 +679,32 @@ function pollJob(cmd, jobId) {
 
 function finishBtn(cmd, ok, output) {
   var btn=document.getElementById('btn-'+cmd), icon=document.getElementById(cmd+'-icon');
+  if (!btn) return;
   btn.disabled=false; btn.classList.remove('running');
   btn.classList.add(ok?'ok':'err');
   icon.classList.remove('spin-neon');
   icon.textContent = ok?'✓':'✗';
   showToast(output||(ok?'Done.':'Failed.'), !ok);
   setTimeout(()=>{ btn.classList.remove('ok','err'); icon.textContent=_ICONS[cmd]; }, 5000);
+}
+
+// Reconnect to any persistent jobs that were running before a page reload
+function _reconnectPersistentJobs() {
+  Object.keys(_PERSISTENT_CMDS).forEach(cmd => {
+    var stored = localStorage.getItem(_PERSISTENT_CMDS[cmd]);
+    if (!stored) return;
+    fetch('/api/run/status/'+stored)
+      .then(r=>r.json())
+      .then(d => {
+        if (d.status === 'running') {
+          _setBtnRunning(cmd);
+          pollJob(cmd, stored);
+        } else {
+          localStorage.removeItem(_PERSISTENT_CMDS[cmd]);
+        }
+      })
+      .catch(() => localStorage.removeItem(_PERSISTENT_CMDS[cmd]));
+  });
 }
 
 // init — restore mode from URL/local storage (default paper)
@@ -676,4 +714,5 @@ function finishBtn(cmd, ok, output) {
     _mode = q;
   }
   setMode(_mode);
+  _reconnectPersistentJobs();
 })();

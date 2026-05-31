@@ -43,11 +43,11 @@ _CAL_PLACEHOLDER = {
 }
 
 
-def _run_job(job_id: str, cmd_flag: str, mode: str = "paper"):
+def _run_job(job_id: str, cmd_flag: str, mode: str = "paper", timeout: int = 600):
     try:
         result = subprocess.run(
             ["python3", "main.py", "--mode", mode, cmd_flag],
-            capture_output=True, text=True, timeout=600,
+            capture_output=True, text=True, timeout=timeout,
             cwd=_BOT_DIR,
         )
         output = (result.stdout + result.stderr).strip()
@@ -57,23 +57,27 @@ def _run_job(job_id: str, cmd_flag: str, mode: str = "paper"):
         }
         _api_cache.pop(mode, None)
     except subprocess.TimeoutExpired:
-        _jobs[job_id] = {"status": "error", "output": "Timed out after 10 minutes."}
+        mins = timeout // 60
+        _jobs[job_id] = {"status": "error", "output": f"Timed out after {mins} minutes."}
     except Exception as e:
         _jobs[job_id] = {"status": "error", "output": str(e)}
 
 
+_CMD_TIMEOUT = {"backfill": 3600}
+
 @app.route("/api/run/<cmd>", methods=["POST"])
 def run_cmd(cmd):
-    allowed = {"scan": "--scan", "resolve": "--resolve", "monitor": "--monitor"}
+    allowed = {"scan": "--scan", "resolve": "--resolve", "monitor": "--monitor", "backfill": "--backfill"}
     if cmd not in allowed:
         return jsonify({"error": "unknown command"}), 400
     mode = request.args.get("mode", "paper")
-    running = [j for j in _jobs.values() if j.get("status") == "running" and j.get("cmd") == cmd]
-    if running:
-        return jsonify({"error": f"{cmd} already running"}), 409
+    running_ids = [jid for jid, j in _jobs.items() if j.get("status") == "running" and j.get("cmd") == cmd]
+    if running_ids:
+        return jsonify({"error": f"{cmd} already running", "job_id": running_ids[0]}), 409
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {"status": "running", "output": "", "cmd": cmd}
-    t = threading.Thread(target=_run_job, args=(job_id, allowed[cmd], mode), daemon=True)
+    timeout = _CMD_TIMEOUT.get(cmd, 600)
+    t = threading.Thread(target=_run_job, args=(job_id, allowed[cmd], mode, timeout), daemon=True)
     t.start()
     return jsonify({"job_id": job_id})
 
