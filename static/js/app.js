@@ -6,6 +6,7 @@ const _trades  = new Map();
 const REFRESH_INTERVAL = 30000;
 const HISTORY_DEFAULT_LIMIT = 20;
 let _historyExpanded = false;
+let _historyCity = '';
 const HALF_HOUR_SYNC_INTERVAL = 30 * 60 * 1000;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -258,9 +259,13 @@ function renderHistory(hist) {
     card.innerHTML = '<div class="card-hdr"><span class="card-title glow-text">Trade History</span></div><div class="empty">No resolved trades yet.</div>';
     return;
   }
-  const shown = _historyExpanded ? hist : hist.slice(0, HISTORY_DEFAULT_LIMIT);
-  const pm = shown[0] && shown[0].pm_row;
   hist.forEach(t => _trades.set(String(t.trade_id), t));
+
+  const cities = [...new Set(hist.map(t => t.city).filter(Boolean))].sort();
+  const filtered = _historyCity ? hist.filter(t => t.city === _historyCity) : hist;
+  const shown = _historyExpanded ? filtered : filtered.slice(0, HISTORY_DEFAULT_LIMIT);
+  const pm = hist[0] && hist[0].pm_row;
+
   const rows = shown.map((t, i) => {
     const pnl = t.pnl || 0;
     if (pm) {
@@ -289,30 +294,49 @@ function renderHistory(hist) {
       <td class="tr mono md hide-xs">${actual}</td>
     </tr>`;
   }).join('');
+
   const histTitle = pm ? 'Completed Trades' : 'Trade History';
   const histThead = pm
     ? '<thead><tr><th>Market</th><th class="hide-xs">End</th><th>Side</th><th>Result</th><th class="tr">PnL</th></tr></thead>'
     : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th>Result</th><th class="tr">PnL</th><th class="tr hide-xs">Actual</th></tr></thead>';
-  const histPnlSum = hist.reduce((s, t) => s + (t.pnl || 0), 0);
-  const histWins   = hist.filter(t => t.status === 'won').length;
-  const histLosses = hist.filter(t => t.status === 'lost' || t.status === 'stop_loss').length;
+
+  const histPnlSum = filtered.reduce((s, t) => s + (t.pnl || 0), 0);
+  const histWins   = filtered.filter(t => t.status === 'won').length;
+  const histLosses = filtered.filter(t => t.status === 'lost' || t.status === 'stop_loss').length;
   const histPnlStr = `<span class="pos-pnl-sum mono ${pClass(histPnlSum)}">${histPnlSum >= 0 ? '+$' : '-$'}${Math.abs(histPnlSum).toFixed(2)}</span>`;
   const histWLStr  = `<span class="card-hint">${histWins}W / ${histLosses}L</span>`;
+
+  const cityDropdown = cities.length > 1 ? `
+    <select id="hist-city-filter" class="hist-filter-select">
+      <option value="">All cities</option>
+      ${cities.map(c => `<option value="${c.replace(/"/g,'&quot;')}"${_historyCity === c ? ' selected' : ''}>${c}</option>`).join('')}
+    </select>` : '';
+
   card.innerHTML = `
     <div class="card-hdr">
-      <span class="card-title glow-text">${histTitle} <span class="card-badge">${hist.length}</span></span>
+      <span class="card-title glow-text">${histTitle} <span class="card-badge">${filtered.length}</span></span>
       <div class="card-hdr-right">
+        ${cityDropdown}
         ${histPnlStr}${histWLStr}
-        ${hist.length > HISTORY_DEFAULT_LIMIT ? `<button class="link-btn" id="hist-toggle">${_historyExpanded ? 'Show less' : `Show all (${hist.length})`}</button>` : ''}
+        ${filtered.length > HISTORY_DEFAULT_LIMIT ? `<button class="link-btn" id="hist-toggle">${_historyExpanded ? 'Show less' : `Show all (${filtered.length})`}</button>` : ''}
       </div>
     </div>
     <div class="tbl-wrap"><table class="hist-tbl">
     ${histThead}
     <tbody>${rows}</tbody></table></div>`;
+
   const histToggle = document.getElementById('hist-toggle');
   if (histToggle) {
     histToggle.addEventListener('click', () => {
       _historyExpanded = !_historyExpanded;
+      renderHistory(hist);
+    });
+  }
+  const cityFilter = document.getElementById('hist-city-filter');
+  if (cityFilter) {
+    cityFilter.addEventListener('change', () => {
+      _historyCity = cityFilter.value;
+      _historyExpanded = false;
       renderHistory(hist);
     });
   }
@@ -529,6 +553,7 @@ var _mode = localStorage.getItem('dashboard_mode') || 'paper';
 function setMode(m) {
   _mode = m;
   _historyExpanded = false;
+  _historyCity = '';
   localStorage.setItem('dashboard_mode', m);
   const url = new URL(window.location.href);
   url.searchParams.set('mode', m);
