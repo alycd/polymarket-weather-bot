@@ -467,6 +467,13 @@ function openModal(trade) {
   eEl.className   = 'm-stat-val mono ' + eClass(trade.edge);
   eEl.textContent = (trade.edge>=0?'+':'') + trade.edge.toFixed(3);
   document.getElementById('m-pm-link').href = '#';
+  const wuEl = document.getElementById('m-wu-link');
+  if (trade.icao && trade.target_date) {
+    wuEl.href = 'https://www.wunderground.com/history/daily/'+trade.icao+'/date/'+trade.target_date;
+    wuEl.style.display = '';
+  } else {
+    wuEl.style.display = 'none';
+  }
   const cl = document.getElementById('chart-load');
   cl.style.display = 'flex';
   cl.innerHTML = '<div class="spin-neon"></div><span>Decrypting feed...</span>';
