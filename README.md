@@ -10,50 +10,55 @@ An autonomous quantitative trading system that identifies and exploits pricing i
 
 | Metric | Value |
 |--------|-------|
-| **Total trades** | 63 resolved positions |
-| **Win rate** | **82.5%** (52W / 11L) |
-| **Gross P&L** | **+$806.49 USDC** |
-| **Total capital deployed** | $2,264.15 USDC |
-| **ROI on deployed capital** | **+35.6%** |
-| **Avg model edge at entry** | **20.6 percentage points** above market price |
-| **Edge range** | 2.5pp – 93pp |
-| **Period** | Mar 28 – Apr 3, 2026 (7 days) |
+| **Total trades** | 104 resolved positions |
+| **Win rate** | **66.3%** (69W / 35L) |
+| **Gross P&L** | **+$70.30 USDC** |
+| **Total capital deployed** | $1,437.09 USDC |
+| **ROI on deployed capital** | **+4.9%** |
+| **Period** | May 23 – Jun 2, 2026 (10 days) |
 
 **Direction breakdown:**
 
 | Side | Trades | Win Rate | P&L | ROI |
 |------|--------|----------|-----|-----|
-| NO   | 60     | 83%      | +$797.68 | +36.1% |
-| YES  | 3      | 67%      | +$8.81   | +17.1% |
+| NO   | 97     | 68%      | +$118.03 | +8.9% |
+| YES  | 7      | 43%      | -$47.73  | -45.5% |
 
-**Top 5 trades:**
+**Top 8 trades:**
 
 | Market | Entry | Size | P&L | ROI |
 |--------|-------|------|-----|-----|
-| Houston NO, Mar 28 | $0.06 | $17 | +$249.14 | +1438% |
-| Houston NO, Apr 2 | $0.44 | $157 | +$203.39 | +130% |
-| Houston NO, Apr 1 | $0.43 | $128 | +$169.26 | +133% |
-| Tel Aviv NO, Apr 1 | $0.47 | $138 | +$159.23 | +115% |
-| San Francisco NO, Apr 2 | $0.54 | $143 | +$124.10 | +87% |
+| Los Angeles NO [66,67)°F, May 27 | $0.31 | $15 | +$30.48 | +203% |
+| Lucknow NO [40.5,41.5)°C, May 27 | $0.39 | $15 | +$22.01 | +147% |
+| Paris NO [31.5,32.5)°C, May 24 | $0.40 | $15 | +$19.94 | +133% |
+| Tel Aviv NO [25.5,26.5)°C, May 24 | $0.46 | $15 | +$17.70 | +118% |
+| Paris NO [30.5,31.5)°C, May 23 | $0.47 | $15 | +$17.10 | +114% |
+| Hong Kong NO [30.5,31.5)°C, May 23 | $0.44 | $15 | +$16.02 | +107% |
+| Los Angeles NO [68,69)°F, May 28 | $0.54 | $15 | +$12.95 | +86% |
+| Miami NO [88,89)°F, May 29 | $0.55 | $15 | +$12.52 | +84% |
 
 **City breakdown:**
 
 | City | Trades | Win Rate | P&L | ROI |
 |------|--------|----------|-----|-----|
-| Houston | 6 | 83% | +$623.53 | +186.7% |
-| San Francisco | 2 | 100% | +$230.20 | +90.9% |
-| Tel Aviv | 1 | 100% | +$159.23 | +115.1% |
-| Dallas | 12 | 92% | +$79.26 | +28.8% |
-| Seattle | 5 | 100% | +$17.09 | +42.4% |
-| Miami | 6 | 100% | +$14.08 | +23.1% |
-| Buenos Aires | 11 | 82% | +$8.59 | +3.1% |
-| Paris | 2 | 0% | -$233.64 | -100% |
+| Los Angeles | 8 | 88% | +$73.51 | +67.5% |
+| Lucknow | 3 | 100% | +$42.22 | +101.9% |
+| Tel Aviv | 4 | 100% | +$36.11 | +68.8% |
+| Sao Paulo | 4 | 100% | +$29.01 | +48.3% |
+| Austin | 4 | 100% | +$25.79 | +43.0% |
+| Miami | 3 | 100% | +$25.77 | +62.5% |
+| Shenzhen | 3 | 100% | +$17.81 | +49.9% |
+| Dallas | 3 | 100% | +$17.29 | +38.4% |
+| Seoul | 4 | 25% | -$42.14 | -70.2% |
+| San Francisco | 4 | 25% | -$38.85 | -64.9% |
+| Tokyo | 5 | 40% | -$27.55 | -38.8% |
+| Chicago | 3 | 33% | -$19.63 | -47.3% |
 
 > **Note:** Paper trading uses real-time CLOB mid prices for entry simulation. Actual live fills would incur bid-ask spread costs (~0.5–2pp per trade) not reflected here.
 
 ### Live Trading (Real USDC on-chain)
 
-The system has been deployed live on Polygon via the Polymarket CLOB API. As of Apr 5, 2026, **18 real positions** are on-chain across 8 cities (Atlanta, Buenos Aires, Chicago, Miami, Sao Paulo, Seattle, Munich, San Francisco), entered between Apr 1–3, 2026. Live resolution tracking is active and awaiting market settlement.
+The system has been deployed live on Polygon via the Polymarket CLOB API. Live resolution tracking is active.
 
 ---
 
@@ -83,14 +88,15 @@ polymarket-weather-bot/
 ├── broker/
 │   ├── paper_broker.py      # Simulated execution with all risk checks
 │   ├── live_broker.py       # Real CLOB order submission via py-clob-client
-│   └── position_manager.py  # Resolution engine + P&L settlement
+│   ├── position_manager.py  # Resolution engine + P&L settlement
+│   └── correlation_filter.py  # Cross-city region caps, bucket caps, NO proximity filter
 │
 ├── metrics/
 │   ├── calibration.py       # Shrinkage factor from resolved trade history
 │   ├── sharpe.py            # Rolling risk-adjusted return tracking
 │   └── reporting.py         # Dashboard data aggregation
 │
-└── web_dashboard.py         # Flask dashboard with live P&L + open positions
+└── web_dashboard.py         # Flask dashboard — open positions sorted by soonest expiry
 ```
 
 ---
@@ -114,8 +120,32 @@ polymarket-weather-bot/
    - Order book depth check: skip if top-5 CLOB depth < $150 USDC
    - Timing filter: skip if market price has been converging toward model value
    - Global deployment cap: max 40% of portfolio in open positions
+   - **Correlation filter** (see below)
 
 7. **Kelly sizing** — Fractional Kelly (25%) with tier scaling and a hard cap of $15/trade.
+
+---
+
+## Correlation Filter (`broker/correlation_filter.py`)
+
+Three independent checks gate every trade before execution:
+
+**Check 1 — Region cap:** At most N unique cities with open positions per weather region per target date. Prevents independently betting on cities in the same synoptic weather system (e.g., a cold front hitting London and Paris is one bet, not two).
+
+| Region | Cap | Cities |
+|--------|-----|--------|
+| Europe_W | 3 | London, Paris, Madrid, Munich, Milan |
+| NA_East | 3 | NYC, Chicago, Atlanta, Dallas, Miami, Toronto |
+| NA_West | 2 | Seattle |
+| LatAm | 3 | Buenos Aires, Sao Paulo |
+| Other | 3 | Hong Kong, Tel Aviv |
+
+**Check 2 — Bucket cap:** Max simultaneous open bucket trades per city per date — 3 for YES bets (correlated upside), 5 for NO bets (mutually exclusive loss risk).
+
+**Check 3 — NO proximity filter:** Adjacent NO bets on the same city and target date partially cancel: if the actual high lands in one bucket, that NO loses while the adjacent NO wins — wasting capital on a net-flat outcome. Any new NO trade whose bucket is within 2°F (1°C) of an existing open NO is evaluated in two modes:
+
+- **Same-scan (race condition):** Blocked unconditionally. Trades entered within the same scan run can't reprice against each other — this is pure duplication.
+- **Cross-scan (model updated):** The incumbent trade's unrealized PnL is checked against current CLOB prices. If it's **negative** — the model updated, the market repriced, and the new signal is better — the incumbent is closed at the current market price (`stop_loss`) and the new trade is entered in its place. If the incumbent is still **profitable**, the new trade is skipped.
 
 ---
 
@@ -181,7 +211,6 @@ These do fundamentally different things:
 In the daemon, `--scan` runs at 4 fixed UTC times plus every 30 minutes opportunistically; `--exit-scan` runs every 30 minutes as a risk management check.
 
 ```bash
-
 # Web dashboard (port 5001)
 python web_dashboard.py
 
