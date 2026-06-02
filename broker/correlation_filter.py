@@ -124,7 +124,7 @@ def correlation_allows_trade(city: str, target_date: str,
                               bucket_lo: float | None = None,
                               bucket_hi: float | None = None,
                               bucket_unit: str = "F",
-                              pending_no_buckets: list | None = None) -> tuple[bool, str]:
+                              pending_no_buckets: list | None = None) -> tuple[bool, str, dict | None]:
     """
     Check whether adding a new trade for `city` on `target_date` is allowed.
 
@@ -134,25 +134,30 @@ def correlation_allows_trade(city: str, target_date: str,
       2. Bucket cap — direction-aware:
            YES bets: max MAX_BUCKETS_PER_CITY_YES (correlated risk, cap tightly)
            NO bets:  max MAX_BUCKETS_PER_CITY_NO  (mutually exclusive loss risk, cap loosely)
-      3. NO proximity — block a new NO trade whose bucket is within MIN_NO_BUCKET_GAP of
-         any existing open or in-scan NO trade on the same city/date. Adjacent NO bets
-         cancel out when the actual temperature lands in one of the two buckets.
+      3. NO proximity — two sub-cases:
+           a. Cross-scan: existing open trade in DB is too close → return (False, reason, trade)
+              so the caller can check unrealized PnL and optionally close-and-replace it.
+           b. Same-scan: pending_no_buckets trade is too close → return (False, reason, None)
+              always block; no replace logic for trades placed seconds ago in the same run.
 
     Pass open_trades to avoid a redundant DB query during a scan loop.
     Pass pending_no_buckets (list of (lo, hi, unit) tuples) for trades placed in the
     current scan run that are not yet reflected in the DB snapshot.
-    Returns (allowed: bool, reason: str).
+    Returns (allowed: bool, reason: str, conflicting_trade: dict | None).
+    conflicting_trade is set only for cross-scan proximity blocks; None otherwise.
     """
     if open_trades is None:
         open_trades = db.get_open_trades()
 
     # Check 3 runs for ALL cities (not region-gated) — do it before the early-return below.
     # Adjacent NO bets on the same city/date cancel each other out when the actual temp
-    # lands in one of the two buckets. Block any new NO trade within MIN_NO_BUCKET_GAP.
+    # lands in one of the two buckets.
     if direction == "NO" and bucket_lo is not None:
         min_gap = MIN_NO_BUCKET_GAP_F if bucket_unit == "F" else MIN_NO_BUCKET_GAP_C
         unit_label = "°F" if bucket_unit == "F" else "°C"
 
+        # 3a. Cross-scan: check existing open trades from DB.
+        # Return the conflicting trade so the caller can decide to close-and-replace.
         for t in open_trades:
             if t.get("city") != city or t.get("direction") != "NO":
                 continue
@@ -167,8 +172,10 @@ def correlation_allows_trade(city: str, target_date: str,
                     f"is {gap:.1f}{unit_label} away (min {min_gap}{unit_label})"
                 )
                 logger.info("Proximity filter blocked %s: %s", city, reason)
-                return False, reason
+                return False, reason, t
 
+        # 3b. Same-scan: check pending_no_buckets (race-condition guard).
+        # Always block — no replace logic for trades placed seconds ago in the same run.
         for plo, phi, _punit in (pending_no_buckets or []):
             gap = _bucket_gap(bucket_lo, bucket_hi, plo, phi)
             if gap < min_gap:
@@ -177,11 +184,11 @@ def correlation_allows_trade(city: str, target_date: str,
                     f"is {gap:.1f}{unit_label} away (min {min_gap}{unit_label})"
                 )
                 logger.info("Proximity filter blocked %s: %s", city, reason)
-                return False, reason
+                return False, reason, None
 
     region = CITY_REGION.get(city)
     if region is None:
-        return True, ""
+        return True, "", None
 
     # Check 1: region cap (unique cities) — uses per-region limit
     region_cap = REGION_MAX_POSITIONS.get(region, 2)
@@ -193,7 +200,7 @@ def correlation_allows_trade(city: str, target_date: str,
             f"open trades on {target_date}"
         )
         logger.info("Correlation filter blocked %s: %s", city, reason)
-        return False, reason
+        return False, reason, None
 
     # Check 2: per-city bucket cap (direction-aware)
     bucket_cap = MAX_BUCKETS_PER_CITY_YES if direction == "YES" else MAX_BUCKETS_PER_CITY_NO
@@ -205,6 +212,6 @@ def correlation_allows_trade(city: str, target_date: str,
             f"open {direction} bucket trades on {target_date}"
         )
         logger.info("Correlation filter blocked %s: %s", city, reason)
-        return False, reason
+        return False, reason, None
 
-    return True, ""
+    return True, "", None

@@ -661,8 +661,10 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                 print(f"    {Y}      → OBSERVE ONLY (warming up){RST}")
                 continue
 
-            # Correlation filter: region cap, bucket cap, and NO proximity check
-            allowed, corr_reason = correlation_allows_trade(
+            # Correlation filter: region cap, bucket cap, and NO proximity check.
+            # Cross-scan proximity returns the conflicting trade so we can close-and-replace
+            # if it has negative unrealized PnL (model updated, market repriced).
+            allowed, corr_reason, conflicting_trade = correlation_allows_trade(
                 city, target_date,
                 direction=signal["direction"],
                 open_trades=_open_trades,
@@ -672,8 +674,33 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                 pending_no_buckets=_pending_no_buckets,
             )
             if not allowed:
-                print(f"    {Y}      → skipped: {corr_reason}{RST}")
-                continue
+                replaced = False
+                if conflicting_trade is not None:
+                    # Cross-scan proximity: check unrealized PnL of the incumbent trade.
+                    # If it's losing, close it and let the new (better) signal through.
+                    _prices = db.get_latest_prices_for_markets([conflicting_trade["market_id"]])
+                    _price_info = _prices.get(conflicting_trade["market_id"])
+                    if _price_info:
+                        _cur_yes_mid, _ = _price_info
+                        _c_size   = conflicting_trade["size_usdc"]
+                        _c_shares = _c_size / conflicting_trade["entry_price"]
+                        _c_exit   = 1.0 - _cur_yes_mid  # NO token exit price
+                        _unreal_pnl = _c_shares * _c_exit - _c_size
+                        if _unreal_pnl < 0.0:
+                            db.resolve_trade(
+                                conflicting_trade["trade_id"], None,
+                                "stop_loss", _c_exit, "proximity_replace",
+                            )
+                            _open_trades = [t for t in _open_trades
+                                            if t["trade_id"] != conflicting_trade["trade_id"]]
+                            print(f"    {Y}      → proximity replace: closed "
+                                  f"[{conflicting_trade['bucket_lo']},"
+                                  f"{conflicting_trade['bucket_hi']}) "
+                                  f"@ {_c_exit:.3f} (PnL ${_unreal_pnl:+.2f}){RST}")
+                            replaced = True
+                if not replaced:
+                    print(f"    {Y}      → skipped: {corr_reason}{RST}")
+                    continue
 
             # Per-city daily cap: all bets for the same city+date share the same
             # underlying temperature outcome. Cap total deployed to MAX_CITY_DATE_FRACTION
