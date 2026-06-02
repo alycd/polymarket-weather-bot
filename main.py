@@ -531,6 +531,10 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
         # to avoid N×M DB queries (N cities × M buckets × 3 callers each).
         _open_trades = db.get_open_trades()
 
+        # Track NO trades placed during this scan run so the proximity filter can see them
+        # even though _open_trades is a snapshot taken before the bucket loop starts.
+        _pending_no_buckets: list[tuple] = []
+
         # For weekly markets: pre-fetch per-day corrected forecasts so weekly_market_prob
         # can use the actual ensemble mean per calendar day instead of a single mean.
         _per_day_corrected: list[dict[str, float]] | None = None
@@ -657,11 +661,15 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                 print(f"    {Y}      → OBSERVE ONLY (warming up){RST}")
                 continue
 
-            # Correlation filter: cap exposure per weather region
+            # Correlation filter: region cap, bucket cap, and NO proximity check
             allowed, corr_reason = correlation_allows_trade(
                 city, target_date,
                 direction=signal["direction"],
                 open_trades=_open_trades,
+                bucket_lo=market.get("bucket_lo"),
+                bucket_hi=market.get("bucket_hi"),
+                bucket_unit=market.get("bucket_unit", "F"),
+                pending_no_buckets=_pending_no_buckets,
             )
             if not allowed:
                 print(f"    {Y}      → skipped: {corr_reason}{RST}")
@@ -700,6 +708,12 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                       f"| roll=${result['bankroll_after']:.2f}{RST}")
                 trades_placed += 1
                 traded_ids.add(market_id)
+                if signal["direction"] == "NO":
+                    _pending_no_buckets.append((
+                        market.get("bucket_lo"),
+                        market.get("bucket_hi"),
+                        market.get("bucket_unit", "F"),
+                    ))
 
                 # If --live, also submit the real order to the CLOB
                 if live:
