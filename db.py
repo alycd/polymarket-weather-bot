@@ -604,7 +604,7 @@ def insert_trade(trade_id, market_id, city, icao, target_date, bucket_lo, bucket
 def get_open_trades() -> list[dict]:
     with _conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM trades WHERE status='open' ORDER BY entry_time DESC"
+            "SELECT * FROM trades WHERE status='open' ORDER BY COALESCE(NULLIF(target_date_end, ''), target_date) ASC, entry_time DESC"
         ).fetchall()]
 
 
