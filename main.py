@@ -676,28 +676,43 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
             if not allowed:
                 replaced = False
                 if conflicting_trade is not None:
-                    # Cross-scan proximity: check unrealized PnL of the incumbent trade.
-                    # If it's losing, close it and let the new (better) signal through.
-                    _prices = db.get_latest_prices_for_markets([conflicting_trade["market_id"]])
-                    _price_info = _prices.get(conflicting_trade["market_id"])
-                    if _price_info:
-                        _cur_yes_mid, _ = _price_info
-                        _c_size   = conflicting_trade["size_usdc"]
-                        _c_shares = _c_size / conflicting_trade["entry_price"]
-                        _c_exit   = 1.0 - _cur_yes_mid  # NO token exit price
-                        _unreal_pnl = _c_shares * _c_exit - _c_size
-                        if _unreal_pnl < 0.0:
-                            db.resolve_trade(
-                                conflicting_trade["trade_id"], None,
-                                "stop_loss", _c_exit, "proximity_replace",
-                            )
-                            _open_trades = [t for t in _open_trades
-                                            if t["trade_id"] != conflicting_trade["trade_id"]]
-                            print(f"    {Y}      → proximity replace: closed "
-                                  f"[{conflicting_trade['bucket_lo']},"
-                                  f"{conflicting_trade['bucket_hi']}) "
-                                  f"@ {_c_exit:.3f} (PnL ${_unreal_pnl:+.2f}){RST}")
-                            replaced = True
+                    if conflicting_trade.get("market_id") == market_id:
+                        # Same market re-evaluated on a later scan — never replace yourself,
+                        # just skip. The proximity filter fires because gap=0 < min_gap, but
+                        # this is a duplicate signal, not an adjacent-bucket conflict.
+                        pass
+                    else:
+                        # Different market, adjacent bucket — check incumbent's unrealized PnL.
+                        # If it's losing, close it and let the new (better) signal through.
+                        _prices = db.get_latest_prices_for_markets([conflicting_trade["market_id"]])
+                        _price_info = _prices.get(conflicting_trade["market_id"])
+                        if _price_info:
+                            _cur_yes_mid, _ = _price_info
+                            _c_size   = conflicting_trade["size_usdc"]
+                            _c_shares = _c_size / conflicting_trade["entry_price"]
+                            _c_exit   = 1.0 - _cur_yes_mid  # NO token exit price
+                            _unreal_pnl = _c_shares * _c_exit - _c_size
+                            if _unreal_pnl < 0.0:
+                                db.resolve_trade(
+                                    conflicting_trade["trade_id"], None,
+                                    "stop_loss", _c_exit, "proximity_replace",
+                                )
+                                _open_trades = [t for t in _open_trades
+                                                if t["trade_id"] != conflicting_trade["trade_id"]]
+                                _close_msg = (
+                                    f"NO | {conflicting_trade['city']} {target_date} | "
+                                    f"[{conflicting_trade['bucket_lo']},"
+                                    f"{conflicting_trade['bucket_hi']}) "
+                                    f"entry={conflicting_trade['entry_price']:.3f}"
+                                    f"→{_c_exit:.3f} | PnL: ${_unreal_pnl:+.2f} [proximity_replace]"
+                                )
+                                print(f"    {Y}      → proximity replace: closed "
+                                      f"[{conflicting_trade['bucket_lo']},"
+                                      f"{conflicting_trade['bucket_hi']}) "
+                                      f"@ {_c_exit:.3f} (PnL ${_unreal_pnl:+.2f}){RST}")
+                                from telegram import send_telegram_notification
+                                send_telegram_notification("STOP", _close_msg)
+                                replaced = True
                 if not replaced:
                     print(f"    {Y}      → skipped: {corr_reason}{RST}")
                     continue
