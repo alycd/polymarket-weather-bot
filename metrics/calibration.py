@@ -254,7 +254,13 @@ def compute_calibration_curve(trades: list[dict] | None = None) -> dict:
     if var > 1e-9:
         slope = cov / var
         # slope ≈ 1.0 → perfectly calibrated; < 1.0 → overconfident; > 1.0 → underconfident
-        shrinkage_factor = round(max(0.50, min(1.50, slope)), 3)
+        # Floor at 0.75: the raw slope can drop to ~0.5 on overconfident small samples,
+        # but the MIN_WIN_PROB entry gate already removes the most overconfident bets, so
+        # a 0.5 shrink double-penalises and starves trade volume. Empirically shrink≈0.75
+        # jointly maximises realised PnL and win-rate in trade replay while still
+        # correcting the documented overconfidence; it relaxes toward 1.0 as calibration
+        # improves. See SHRINKAGE_FLOOR.
+        shrinkage_factor = round(max(SHRINKAGE_FLOOR, min(1.50, slope)), 3)
     else:
         shrinkage_factor = None
 
@@ -288,6 +294,22 @@ def compute_calibration_curve(trades: list[dict] | None = None) -> dict:
 
 MIN_TRADES_FOR_SHRINKAGE = 15  # need at least this many to trust the correction
 
+# Gentlest shrink we will apply. The calibration slope can fall to ~0.5 on
+# overconfident samples, but the MIN_WIN_PROB entry gate already filters the most
+# overconfident bets, so a harder shrink double-penalises and starves volume.
+# 0.75 jointly maximises realised PnL and win-rate in resolved-trade replay.
+SHRINKAGE_FLOOR = 0.75
+
+# Weather/temperature markets are recorded with market_type 'daily' or 'weekly',
+# but edge_calculator reads the calibration factor via get_shrinkage_factor("temperature").
+# Group those raw types under the 'temperature' family so the factor is both
+# computed and found. tsa/crypto stay separate.
+SHRINKAGE_FAMILIES = {
+    "temperature": ("temperature", "daily", "weekly"),
+    "tsa":         ("tsa",),
+    "crypto":      ("crypto",),
+}
+
 
 def update_shrinkage_factors() -> dict:
     """
@@ -300,18 +322,18 @@ def update_shrinkage_factors() -> dict:
     all_trades = _db.get_resolved_trades()
     stored = {}
 
-    for mt in ("temperature", "tsa", "crypto"):
+    for family, raw_types in SHRINKAGE_FAMILIES.items():
         subset = [t for t in all_trades
-                  if t.get("market_type", "temperature") == mt]
+                  if t.get("market_type", "daily") in raw_types]
         if len(subset) < MIN_TRADES_FOR_SHRINKAGE:
-            logger.debug("Shrinkage for %s: only %d trades — skipping", mt, len(subset))
+            logger.debug("Shrinkage for %s: only %d trades — skipping", family, len(subset))
             continue
         curve = compute_calibration_curve(subset)
         sf = curve.get("shrinkage_factor")
         if sf is not None:
-            _db.set_kv(f"cal_shrinkage_{mt}", str(sf))
-            stored[mt] = sf
-            logger.info("Shrinkage factor stored: %s = %.3f (n=%d)", mt, sf, len(subset))
+            _db.set_kv(f"cal_shrinkage_{family}", str(sf))
+            stored[family] = sf
+            logger.info("Shrinkage factor stored: %s = %.3f (n=%d)", family, sf, len(subset))
 
     return stored
 
@@ -327,7 +349,7 @@ def get_shrinkage_factor(market_type: str = "temperature") -> float:
         try:
             sf = float(val)
             # Sanity bounds: don't apply extreme corrections
-            return max(0.50, min(1.50, sf))
+            return max(SHRINKAGE_FLOOR, min(1.50, sf))
         except ValueError:
             pass
     return 1.0

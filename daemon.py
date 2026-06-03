@@ -42,6 +42,22 @@ MODEL_RUN_EVENTS = [
     (19, 17, "--scan",    "GFS 12Z + US nowcast scan"),
     (7,  47, "--resolve", "Morning resolve"),
     (19, 55, "--resolve", "Afternoon resolve"),
+    # Refresh calibration shrinkage factors daily. Deliberately placed at :15 — a
+    # scan-free gap (the 30-min opportunistic + exit scans fire on :00/:30) and after
+    # the 07:47 morning resolve has settled overnight trades, so the shrink factor is
+    # recomputed on fresh outcomes without contending with a scan.
+    (8,  15, "--calibration", "Daily calibration + shrinkage refresh"),
+]
+
+# Weekly maintenance events: (weekday, hour, minute, command, label).
+# weekday: Monday=0 … Sunday=6 (matches datetime.weekday()).
+# Backfill is heavy (all cities × ASOS/ERA5/Open-Meteo) and refreshes bias
+# corrections (recompute_bias) for EVERY city — including not-yet-traded re-admitted
+# ones, whose corrections otherwise only update when one of their trades resolves.
+# Placed Sunday 03:15 UTC: a quiet, scan-free gap far from the fixed
+# scans/resolves/nowcasts (worst case it delays one 03:30 opportunistic/exit scan).
+WEEKLY_EVENTS = [
+    (6, 3, 15, "--backfill", "Weekly backfill (refresh obs + bias corrections)"),
 ]
 
 # Per-city nowcast windows: fire at 2:00pm and 3:30pm local time
@@ -99,6 +115,12 @@ def _build_schedule(now: datetime) -> list[tuple[datetime, str, str]]:
             fire = datetime(d.year, d.month, d.day, h, m, tzinfo=timezone.utc)
             if fire > now:
                 events.append((fire, flag, label))
+        # Weekly maintenance events (only on the matching weekday)
+        for wd, h, m, flag, label in WEEKLY_EVENTS:
+            if d.weekday() == wd:
+                fire = datetime(d.year, d.month, d.day, h, m, tzinfo=timezone.utc)
+                if fire > now:
+                    events.append((fire, flag, label))
         # Nowcast events
         for fire, label in _nowcast_utc_times(d):
             if fire > now:

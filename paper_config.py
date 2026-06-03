@@ -23,4 +23,13 @@ MAX_CITY_DATE_FRACTION   = 0.15
 MIN_MARKET_VOLUME_USDC   = 500.0
 
 # ── City exclusions ───────────────────────────────────────────────────────────
-CITY_EXCLUDE: set[str] = {"Hong Kong", "Buenos Aires", "Warsaw", "Chengdu", "Wuhan", "Ankara", "San Francisco", "Seoul", "Tokyo", "Munich", "Taipei", "Chongqing", "Beijing"}
+# Re-admitted 2026-06-03: Ankara, Beijing, Munich, San Francisco, Seoul, Taipei,
+# Tokyo, Warsaw. These were excluded during warmup for a large COLD forecast bias
+# (+1.0–2.0°C), not genuine noise. Per-model/month bias corrections are now
+# populated; applying the live corrections drops their forecast RMSE to 0.5–1.25°C
+# (≤ the tradeable-city average of 1.20°C) with near-zero residual bias. Validated
+# against real ASOS/WU obs at lead 0–1. See bias-correction memory + S2 backtest.
+# Still excluded: Buenos Aires (genuinely noisy, corrected RMSE 2.14); Hong Kong,
+# Chengdu, Wuhan (too few real-obs points to validate re-admission yet); Chongqing
+# (borderline, corrected RMSE 1.37).
+CITY_EXCLUDE: set[str] = {"Hong Kong", "Buenos Aires", "Chengdu", "Wuhan", "Chongqing"}
