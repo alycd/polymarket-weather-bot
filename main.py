@@ -692,7 +692,10 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                             _c_shares = _c_size / conflicting_trade["entry_price"]
                             _c_exit   = 1.0 - _cur_yes_mid  # NO token exit price
                             _unreal_pnl = _c_shares * _c_exit - _c_size
-                            if _unreal_pnl < 0.0:
+                            _new_prob  = signal.get("model_prob", 1.0)
+                            _old_prob  = conflicting_trade.get("model_prob", 0.0)
+                            _better    = _new_prob < _old_prob
+                            if _unreal_pnl < 0.0 and _better:
                                 db.resolve_trade(
                                     conflicting_trade["trade_id"], None,
                                     "stop_loss", _c_exit, "proximity_replace",
@@ -704,12 +707,14 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                                     f"[{conflicting_trade['bucket_lo']},"
                                     f"{conflicting_trade['bucket_hi']}) "
                                     f"entry={conflicting_trade['entry_price']:.3f}"
-                                    f"→{_c_exit:.3f} | PnL: ${_unreal_pnl:+.2f} [proximity_replace]"
+                                    f"→{_c_exit:.3f} | PnL: ${_unreal_pnl:+.2f} "
+                                    f"| model {_old_prob:.3f}→{_new_prob:.3f} [proximity_replace]"
                                 )
                                 print(f"    {Y}      → proximity replace: closed "
                                       f"[{conflicting_trade['bucket_lo']},"
                                       f"{conflicting_trade['bucket_hi']}) "
-                                      f"@ {_c_exit:.3f} (PnL ${_unreal_pnl:+.2f}){RST}")
+                                      f"@ {_c_exit:.3f} (PnL ${_unreal_pnl:+.2f}, "
+                                      f"model {_old_prob:.3f}→{_new_prob:.3f}){RST}")
                                 from telegram import send_telegram_notification
                                 send_telegram_notification("STOP", _close_msg)
                                 replaced = True
