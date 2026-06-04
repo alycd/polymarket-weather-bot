@@ -9,7 +9,16 @@ MIN_EDGE              = 0.12
 MIN_WIN_PROB          = 0.70
 MIN_WIN_PROB_YES      = 0.60
 NO_ENTRY_MIN_PRICE    = 0.35
-NO_ENTRY_MAX_PRICE    = 0.75
+# Lowered 0.75 → 0.65 on 2026-06-04. Resolved-trade replay (118 settled NO trades,
+# entry ≥ 0.35) shows a sharp profitability cliff at 0.65: every band from 0.35–0.65
+# is profitable (ROI +6% to +126%), while 0.65–0.70 (n=37) and 0.70–0.75 (n=20) both
+# LOSE money (−8.7% / −5.0% ROI) despite a 59–70% win rate — pure payoff asymmetry
+# (NO at 0.70 needs a 70% win rate just to break even, which the model's documented
+# overconfidence erodes). Capping at 0.65 lifts settled-NO ROI 11.5% → 26.4%, adds
+# +$43 realized P&L, and frees ~$756 of capital to redeploy into the 0.35–0.65 zone.
+# NOTE: backtest.py cannot validate this (it assumes a fixed 0.50 mid, so the ceiling
+# never binds); validated by resolved-trade counterfactual replay instead.
+NO_ENTRY_MAX_PRICE    = 0.65
 NO_MIN_ENSEMBLE_STD   = 0.8
 ENSEMBLE_STD_MIN      = 0.5
 ENSEMBLE_STD_MAX      = 2.0
