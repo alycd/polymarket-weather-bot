@@ -23,7 +23,7 @@ from data.noaa import fetch_asos_daily_max
 from data.openmeteo import fetch_historical_actuals
 from config_active import CITIES
 import db
-from telegram import send_telegram_notification
+from telegram import send_trade_event
 
 logger = logging.getLogger(__name__)
 
@@ -429,13 +429,18 @@ def resolve_expired_trades(dry_run: bool = False) -> list[dict]:
             db.log_event("TRADE_RESOLVED", msg, city=city, icao=icao,
                          data={"actual_c": actual_c, "outcome": outcome,
                                "pnl": pnl, "outcome_source": outcome_source})
-            pnl_str = f"{'+' if pnl and pnl >= 0 else ''}{pnl:.2f}" if pnl is not None else "n/a"
-            temp_str = f" | actual={actual_c:.1f}°C" if actual_c is not None else ""
-            send_telegram_notification(
+            send_trade_event(
                 "WIN" if outcome == "won" else "LOSS",
-                f"{trade['direction']} | {city} {target_date}"
-                f"{temp_str} | bucket=[{bucket_lo},{bucket_hi}]{bucket_unit} | "
-                f"PnL: {pnl_str}",
+                direction=trade["direction"],
+                city=city,
+                target_date=target_date,
+                entry_price=trade["entry_price"],
+                bucket_lo=bucket_lo,
+                bucket_hi=bucket_hi,
+                bucket_unit=bucket_unit,
+                edge=trade["edge"],
+                stake=size,
+                pnl=pnl,
             )
             # Update TSA calibration record if applicable
             if trade.get("market_type") == "tsa":
