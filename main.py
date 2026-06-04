@@ -702,21 +702,25 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                                 )
                                 _open_trades = [t for t in _open_trades
                                                 if t["trade_id"] != conflicting_trade["trade_id"]]
-                                _close_msg = (
-                                    f"NO | {conflicting_trade['city']} {target_date} | "
-                                    f"[{conflicting_trade['bucket_lo']},"
-                                    f"{conflicting_trade['bucket_hi']}) "
-                                    f"entry={conflicting_trade['entry_price']:.3f}"
-                                    f"→{_c_exit:.3f} | PnL: ${_unreal_pnl:+.2f} "
-                                    f"| model {_old_prob:.3f}→{_new_prob:.3f} [proximity_replace]"
-                                )
                                 print(f"    {Y}      → proximity replace: closed "
                                       f"[{conflicting_trade['bucket_lo']},"
                                       f"{conflicting_trade['bucket_hi']}) "
                                       f"@ {_c_exit:.3f} (PnL ${_unreal_pnl:+.2f}, "
                                       f"model {_old_prob:.3f}→{_new_prob:.3f}){RST}")
-                                from telegram import send_telegram_notification
-                                send_telegram_notification("STOP", _close_msg)
+                                from telegram import send_trade_event
+                                send_trade_event(
+                                    "STOP",
+                                    direction=conflicting_trade["direction"],
+                                    city=conflicting_trade["city"],
+                                    target_date=target_date,
+                                    entry_price=conflicting_trade["entry_price"],
+                                    bucket_lo=conflicting_trade["bucket_lo"],
+                                    bucket_hi=conflicting_trade["bucket_hi"],
+                                    bucket_unit=conflicting_trade.get("bucket_unit", "C"),
+                                    edge=conflicting_trade["edge"],
+                                    stake=conflicting_trade["size_usdc"],
+                                    pnl=_unreal_pnl,
+                                )
                                 replaced = True
                 if not replaced:
                     print(f"    {Y}      → skipped: {corr_reason}{RST}")
@@ -1282,12 +1286,19 @@ def cmd_exit_scan(dry_run=False):
                     logger.warning("Live sell failed for %s: %s", trade_id[:8], e)
             db.resolve_trade(trade_id, None, outcome, exit_val, outcome_source="exit_scan")
             db.log_event("EXIT_SCAN", reason, city=city, icao=trade.get("icao", ""))
-            from telegram import send_telegram_notification
-            pnl_str = f"{'+' if pnl_est >= 0 else ''}{pnl_est:.2f}"
-            send_telegram_notification(
+            from telegram import send_trade_event
+            send_trade_event(
                 "WIN" if outcome == "won" else "LOSS",
-                f"{direction} | {city} {target_date} | "
-                f"entry={entry_price:.3f}→{exit_val:.3f} | PnL: {pnl_str} [{reason}]",
+                direction=direction,
+                city=city,
+                target_date=target_date,
+                entry_price=entry_price,
+                bucket_lo=trade["bucket_lo"],
+                bucket_hi=trade["bucket_hi"],
+                bucket_unit=trade["bucket_unit"],
+                edge=trade["edge"],
+                stake=size,
+                pnl=pnl_est,
             )
             exited += 1
         else:
