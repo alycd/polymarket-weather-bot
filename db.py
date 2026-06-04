@@ -622,10 +622,23 @@ def get_all_trades(status=None) -> list[dict]:
 
 
 def get_resolved_trades() -> list[dict]:
-    """Return only won/lost trades — more efficient than get_all_trades() + filter."""
+    """Return only won/lost trades — true weather outcomes, for calibration/Brier.
+    Excludes stop_loss (early risk exits, not real resolutions). For money math
+    (realized P&L) use get_realized_trades() instead."""
     with _conn() as conn:
         rows = conn.execute(
             "SELECT * FROM trades WHERE status IN ('won','lost') ORDER BY entry_time DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_realized_trades() -> list[dict]:
+    """Return all trades with realized P&L: won/lost/stop_loss. Use for money
+    math (total P&L, Sharpe) so stop-loss exits are counted. For forecast-accuracy
+    metrics (calibration) use get_resolved_trades() — stop_loss has no true outcome."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trades WHERE status IN ('won','lost','stop_loss') ORDER BY entry_time DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 

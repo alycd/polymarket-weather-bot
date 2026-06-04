@@ -5,7 +5,7 @@ import db
 
 
 def compute_sharpe() -> float | None:
-    resolved = [t for t in db.get_resolved_trades() if t["pnl"] is not None]
+    resolved = [t for t in db.get_realized_trades() if t["pnl"] is not None]
     if len(resolved) < 4:
         return None
 

@@ -3,13 +3,14 @@ import db
 
 
 def compute_pnl_summary() -> dict:
-    resolved   = db.get_resolved_trades()
+    resolved   = db.get_realized_trades()   # won/lost/stop_loss — all realized P&L
     open_trades = db.get_open_trades()
     bankroll   = db.get_bankroll()
 
     total_pnl = sum(t["pnl"] for t in resolved if t["pnl"] is not None)
-    wins   = [t for t in resolved if t["status"] == "won"]
-    losses = [t for t in resolved if t["status"] == "lost"]
+    # Categorise by realised P&L sign so stop-loss exits count as losses.
+    wins   = [t for t in resolved if (t["pnl"] or 0) > 0]
+    losses = [t for t in resolved if (t["pnl"] or 0) < 0]
 
     deployed = sum(t["size_usdc"] for t in open_trades)
     initial  = 1000.0
