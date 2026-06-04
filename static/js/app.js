@@ -181,8 +181,8 @@ function renderPositions(pos) {
       <td>${dir} <span class="mono md hide-xs" style="font-size:11px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span></td>
       <td class="tr mono hide-xs">${(p.entry_price*100).toFixed(1)}¢</td>
       <td class="tr mono hide-xs">${nowStr}</td>
-      <td class="tr mono fw6">${p.size_usdc>0?'$'+p.size_usdc.toFixed(2):'<span class="md">—</span>'}</td>
-      <td class="tr mono hide-xs">${maxWinStr}</td>
+      <td class="tr mono fw6 hide-xs">${p.size_usdc>0?'$'+p.size_usdc.toFixed(2):'<span class="md">—</span>'}</td>
+      <td class="tr mono fw6">${maxWinStr}</td>
       <td class="tr mono fw6">${upnlStr}</td>
     </tr>`;
   }).join('');
@@ -192,7 +192,7 @@ function renderPositions(pos) {
   const pnlSumStr = `<span class="pos-pnl-sum mono ${pClass(pnlSum)}">${pnlSum >= 0 ? '+$' : '-$'}${Math.abs(pnlSum).toFixed(2)}</span>`;
   const thead = pm
     ? '<thead><tr><th>Market</th><th class="hide-xs">End</th><th>Side</th><th class="tr hide-xs">Avg</th><th class="tr hide-xs">Mkt%</th><th class="tr">Value</th><th class="tr">PnL</th></tr></thead>'
-    : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th class="tr hide-xs">Entry</th><th class="tr hide-xs">Now</th><th class="tr">Size</th><th class="tr hide-xs">Max Win</th><th class="tr">Unreal PnL</th></tr></thead>';
+    : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th class="tr hide-xs">Entry</th><th class="tr hide-xs">Now</th><th class="tr hide-xs">Size</th><th class="tr">Max Win</th><th class="tr">Unreal PnL</th></tr></thead>';
   card.innerHTML = `
     <div class="card-hdr">
       <span class="card-title glow-text">Open Positions <span class="card-badge">${pos.length}</span></span>
