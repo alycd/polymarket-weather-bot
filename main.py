@@ -127,6 +127,29 @@ def _signal_health_policy():
         pass
     return {"skip": False, "mult": 1.0, "state": "ok"}
 
+
+def _probe_openmeteo_health():
+    """One live fetch to verify Open-Meteo is actually reachable.
+
+    The stored health flag only flips back to 'ok' inside fetch_all_models on a
+    successful fetch, but the scan skips fetching entirely while the flag reads
+    'offline' — so a transient blip latches the bot offline indefinitely. This
+    probe breaks that deadlock: a single successful fetch self-heals the flag
+    (see openmeteo.py); a genuine outage fails the probe and the per-city gate
+    keeps skipping entries for safety. Returns True if the probe succeeded.
+    """
+    try:
+        from data.openmeteo import fetch_all_models
+        ref = next((c for c in CITIES if c not in CITY_EXCLUDE), None)
+        if ref is None:
+            return False
+        cfg = CITIES[ref]
+        fetch_all_models(cfg["lat"], cfg["lon"], date.today().isoformat(), cfg["timezone"])
+        return True
+    except Exception as e:
+        logger.warning("Open-Meteo health probe failed: %s", e)
+        return False
+
 G   = "\033[92m"
 R   = "\033[91m"
 Y   = "\033[93m"
@@ -426,6 +449,17 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
 
     today_str    = date.today().isoformat()
     tomorrow_str = (date.today() + timedelta(days=1)).isoformat()
+
+    # If Open-Meteo reads 'offline', probe once before the per-city loop. A
+    # successful fetch self-heals the flag so a stale/transient outage can't
+    # latch the bot offline forever; a failed probe leaves the flag offline and
+    # the per-city gate below still skips entries for safety.
+    if _signal_health_policy()["state"] == "offline":
+        print(f"  {Y}⚠ Open-Meteo flagged offline — probing data source...{RST}")
+        if _probe_openmeteo_health():
+            print(f"  {G}✓ Probe succeeded — data source healthy, clearing offline flag{RST}\n")
+        else:
+            print(f"  {R}✗ Probe failed — data source genuinely down, skipping entries{RST}\n")
 
     for (city, target_date), bucket_markets in sorted(grouped.items()):
         if city not in CITIES or city in CITY_EXCLUDE:
