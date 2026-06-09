@@ -459,16 +459,34 @@ function renderOps(ops) {
 // ── modal ─────────────────────────────────────────────────────────────────────
 function openModal(trade) {
   const dir = trade.direction;
+  // Live Polymarket rows (pm_row) repurpose model_prob→current price and
+  // edge→cash PnL, so the direction-aware win%/edge framing is paper-only.
+  const isPaper = !trade.pm_row;
+  const isNo    = isPaper && dir !== 'YES';
   document.getElementById('m-title').textContent = trade.question || (trade.city+' '+trade.target_date);
   document.getElementById('m-dir').innerHTML   = dir==='YES' ? '<span class="badge b-yes">YES</span>' : '<span class="badge b-no">NO</span>';
   document.getElementById('m-entry').textContent  = '$'+trade.entry_price.toFixed(4);
   document.getElementById('m-size').textContent   = '$'+trade.size_usdc.toFixed(2);
   document.getElementById('m-model').textContent  = trade.model_prob.toFixed(3);
+  // Win % — probability the side actually held wins. NO wins when the high
+  // misses the bucket (1 − model_prob); YES wins on model_prob. Paper only.
+  const wEl = document.getElementById('m-win');
+  if (isPaper) {
+    const winP = isNo ? 1 - trade.model_prob : trade.model_prob;
+    wEl.textContent = (winP*100).toFixed(1) + '%';
+    wEl.className   = 'm-stat-val mono ' + (winP>=0.5 ? 'g' : winP>=0.4 ? 'y' : 'r');
+  } else {
+    wEl.textContent = '—';
+    wEl.className   = 'm-stat-val mono md';
+  }
   document.getElementById('m-current').textContent = '…';
   document.getElementById('m-current').className  = 'm-stat-val mono md';
+  // Edge — framed for the side held (positive = favorable). Stored edge is
+  // YES-framed, so flip the sign for NO bets.
   const eEl = document.getElementById('m-edge');
-  eEl.className   = 'm-stat-val mono ' + eClass(trade.edge);
-  eEl.textContent = (trade.edge>=0?'+':'') + trade.edge.toFixed(3);
+  const edgeVal = isNo ? -trade.edge : trade.edge;
+  eEl.className   = 'm-stat-val mono ' + eClass(edgeVal);
+  eEl.textContent = (edgeVal>=0?'+':'') + edgeVal.toFixed(3);
   document.getElementById('m-pm-link').href = '#';
   const wuEl = document.getElementById('m-wu-link');
   if (trade.icao && trade.target_date) {
@@ -493,11 +511,19 @@ function openModal(trade) {
       if (pmSlug) document.getElementById('m-pm-link').href = 'https://polymarket.com/event/'+pmSlug;
       const pts = hist.history || [];
       if (!pts.length) { cl.innerHTML = 'No price history available.'; return; }
-      const last     = pts[pts.length-1].p;
+      const last     = pts[pts.length-1].p;            // YES-token price
       const entryYES = dir==='YES' ? trade.entry_price : 1-trade.entry_price;
       const curEl    = document.getElementById('m-current');
-      curEl.textContent = '$'+last.toFixed(4);
-      curEl.className   = 'm-stat-val mono ' + (last>=entryYES?'g':'r');
+      if (isPaper) {
+        // Show the price of the side held (comparable to Entry) and color by
+        // whether the position is in profit: held price ≥ held entry.
+        const heldCur = isNo ? 1 - last : last;
+        curEl.textContent = '$'+heldCur.toFixed(4);
+        curEl.className   = 'm-stat-val mono ' + (heldCur>=trade.entry_price ? 'g' : 'r');
+      } else {
+        curEl.textContent = '$'+last.toFixed(4);
+        curEl.className   = 'm-stat-val mono ' + (last>=entryYES?'g':'r');
+      }
       renderChart(pts, entryYES);
     }).catch(() => { cl.innerHTML = 'Could not load price data.'; });
   } else {
