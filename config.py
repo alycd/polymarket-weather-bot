@@ -61,6 +61,18 @@ HIGH_CONVICTION_KELLY_MULT = 2.0
 MAX_EDGE_ABS    = 1.0
 ENABLE_YES_BETS = True
 
+# Lead-conditioned T+1 ensemble-std gate (accuracy guard). Inert default so live
+# is unaffected (0.0 → gate never fires). paper_config activates it at 1.0.
+# Mechanism: at lead_days>=1 (day-before, no nowcaster ground truth) tight model
+# agreement (low ensemble_std) means the specific bucket is likely hit → NO bets
+# fail. Resolved-trade replay: T+1 std∈[0,1.0) wins only 54% (−13.9% ROI); gating
+# T+1 NO bets at std>=1.0 lifts the guarded book 125→101 trades, +$184→+$230 PnL,
+# 10.8%→16.8% ROI, with a monotonic T+1 win ramp (62.9→67.4→72.4% at std 0.8/1.0/1.2).
+# MUST be lead-conditioned: at T+0 (same-day) low-std NO bets are profitable (+10.1%
+# ROI — the nowcaster carries them), so the gate applies ONLY at lead_days>=1.
+# See docs/plans/2026-06-09_tplus1_leadtime_and_upstream.md + [[tplus1-leadtime-regime-split]].
+T_PLUS_ONE_MIN_STD = 0.0
+
 # Forecast uncertainty to add when building the Gaussian
 # (accounts for systematic errors not captured by model spread alone)
 BASE_FORECAST_STD_C  = 2.00   # °C added in quadrature to ensemble spread

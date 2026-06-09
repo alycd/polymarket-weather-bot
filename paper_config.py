@@ -60,6 +60,20 @@ MAX_EDGE_ABS               = 0.40   # skip trades where |edge| exceeds this
 HIGH_CONVICTION_KELLY_MULT = 1.0    # neutralize the 2× boost (was amplifying noise)
 ENABLE_YES_BETS            = False  # pause YES entirely (anti-predictive: high conf → loses)
 
+# ── T+1 lead-conditioned ensemble-std gate (2026-06-09, PAPER ONLY — review ~2026-06-16)
+# The settled book splits by lead time: T+0 (same-day, nowcaster ground truth) carries
+# all profit (+17.7% ROI); T+1 (day-before, pure forecast) is the overconfident-noise
+# regime. At T+1, tight model agreement (low std) → specific bucket likely hit → NO bet
+# fails (std∈[0,1.0): 54% win, −13.9% ROI). Gate T+1 NO bets at std>=1.0. Replay:
+# guarded book 125→101 trades, +$184.35→+$230.51 PnL, 10.8%→16.8% ROI, monotonic
+# T+1 win ramp 62.9→67.4→72.4% at std 0.8/1.0/1.2. Lead-conditioned: T+0 untouched
+# (low-std same-day NO bets are +10.1% ROI — nowcaster carries them). Acts on forecast
+# spread (different axis than the edge-cap/YES/price/city guards above) but stacked
+# mid-window — track as its OWN forward-test line. Chose the gate alone (NOT the ×0.75
+# T+1 stake trim — it lowers total PnL $230→$221 and muddies the forward read).
+# Rollback: set T_PLUS_ONE_MIN_STD = 0.0.
+T_PLUS_ONE_MIN_STD         = 1.0    # T+1 NO bets require ensemble_std >= 1.0°C
+
 # ── City exclusions ───────────────────────────────────────────────────────────
 # Re-admitted 2026-06-03 on corrected-RMSE evidence (Ankara, Beijing, Munich, San
 # Francisco, Seoul, Taipei, Tokyo, Warsaw). PARTIALLY REVERTED 2026-06-09: the S2

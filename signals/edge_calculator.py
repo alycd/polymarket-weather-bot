@@ -15,7 +15,7 @@ import logging
 import math
 import time as _time
 from scipy.stats import t as _t
-from config_active import MIN_EDGE, CITIES, HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT, FORECAST_T_DF, NO_ENTRY_MIN_PRICE, NO_ENTRY_MAX_PRICE, NO_MIN_ENSEMBLE_STD, MAX_EDGE_ABS, ENABLE_YES_BETS
+from config_active import MIN_EDGE, CITIES, HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT, FORECAST_T_DF, NO_ENTRY_MIN_PRICE, NO_ENTRY_MAX_PRICE, NO_MIN_ENSEMBLE_STD, MAX_EDGE_ABS, ENABLE_YES_BETS, T_PLUS_ONE_MIN_STD
 from signals.ensemble import compute_ensemble_stats
 from signals.nowcaster import nowcast_confidence, get_running_max_c, compute_nowcast_bucket_prob
 
@@ -410,6 +410,25 @@ def compute_edge(
                 ensemble.get("std_c", 0.0), NO_MIN_ENSEMBLE_STD,
             )
             return None
+
+        # Lead-conditioned T+1 ensemble-std gate (PAPER; inert in live via 0.0).
+        # At lead_days>=1 (day-before, NO nowcaster ground truth) tight model agreement
+        # (low std) means the specific bucket is likely hit → NO bets fail. So at T+1
+        # we require a higher std than the global NO_MIN_ENSEMBLE_STD. T+0 is untouched
+        # (same-day low-std NO bets are profitable — the nowcaster carries them).
+        # NB: this uses the TRUE unclamped lead (target_date - today); the `lead_days`
+        # computed above is max(1,...) for horizon scaling and would misread T+0 as T+1.
+        if T_PLUS_ONE_MIN_STD > 0.0:
+            try:
+                true_lead = (_date_cls.fromisoformat(str(target_date)) - _date_cls.today()).days
+            except (ValueError, TypeError):
+                true_lead = None
+            if true_lead is not None and true_lead >= 1 and ensemble.get("std_c", 0.0) < T_PLUS_ONE_MIN_STD:
+                logger.debug(
+                    "Skipping T+1 NO bet (lead=%d): ensemble_std=%.2f < T_PLUS_ONE_MIN_STD=%.2f — day-before tight agreement, no nowcaster to override",
+                    true_lead, ensemble.get("std_c", 0.0), T_PLUS_ONE_MIN_STD,
+                )
+                return None
 
     # ── Dynamic MIN_EDGE ──────────────────────────────────────────────────────
     # Combines four factors:
