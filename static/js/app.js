@@ -469,7 +469,10 @@ function openModal(trade) {
   const eEl = document.getElementById('m-edge');
   eEl.className   = 'm-stat-val mono ' + eClass(trade.edge);
   eEl.textContent = (trade.edge>=0?'+':'') + trade.edge.toFixed(3);
-  document.getElementById('m-pm-link').href = '#';
+  const pmLink = document.getElementById('m-pm-link');
+  pmLink.href = '#';
+  pmLink.style.pointerEvents = 'none';
+  pmLink.style.opacity = '0.45';
   const wuEl = document.getElementById('m-wu-link');
   if (trade.icao && trade.target_date) {
     wuEl.href = 'https://www.wunderground.com/history/daily/'+trade.icao+'/date/'+trade.target_date;
@@ -490,7 +493,11 @@ function openModal(trade) {
       fetch('/api/market-meta?token='+encodeURIComponent(trade.clob_token_yes)+'&market_id='+encodeURIComponent(trade.market_id||'')).then(r=>r.json()),
     ]).then(([hist, meta]) => {
       const pmSlug = meta.event_slug ? meta.event_slug+'/'+meta.slug : meta.market_slug;
-      if (pmSlug) document.getElementById('m-pm-link').href = 'https://polymarket.com/event/'+pmSlug;
+      if (pmSlug) {
+        pmLink.href = 'https://polymarket.com/event/'+pmSlug;
+        pmLink.style.pointerEvents = '';
+        pmLink.style.opacity = '';
+      }
       const pts = hist.history || [];
       if (!pts.length) { cl.innerHTML = 'No price history available.'; return; }
       const last     = pts[pts.length-1].p;
