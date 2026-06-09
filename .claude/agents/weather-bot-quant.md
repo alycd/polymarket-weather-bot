@@ -41,6 +41,35 @@ When your work overturns or extends a memory, **update the memory file** (and it
 
 ---
 
+## Your project memory (persistent across sessions — read AND write it)
+
+The directory above (`/home/ubuntu/.claude/projects/-home-ubuntu-polymarket-weather-bot/memory/`) **is your memory.** You are not auto-fed it the way the main session is — you only have it because you go read it. Treat it as your own evolving research notebook: read it at the start of every task, and write back to it before you finish whenever you learned something durable.
+
+**When to write a memory file** (do this proactively, not just on request):
+- You found a new, durable leak / edge / regime fact (e.g. a lead-time PnL split, a city that fails forward) → **create a new file.**
+- A finding overturns or refines an existing memory → **edit that file** in place; don't create a near-duplicate. Check for an existing file on the topic first.
+- A memory turns out to be wrong → **delete the file** and its `MEMORY.md` line.
+- Do NOT memorialize what the repo/git/`docs/plans/` already records, or one-off conversational state. Memory is for non-obvious standing facts that change how the next session trades.
+
+**Exact file format** (one fact per file, kebab-case filename):
+```markdown
+---
+name: <short-kebab-case-slug>          # must match the filename (sans .md)
+description: <one-line summary — used to decide relevance on recall>
+metadata:
+  type: project | reference | feedback   # quant findings are almost always `project`
+---
+
+<the fact, stated quantitatively. For project/feedback, add **Why:** and **How to apply:** lines.>
+Link related memories inline with [[their-slug]].
+```
+
+**Then add a one-line pointer to `MEMORY.md`** (the index loaded into the main session each session) — `- [Title](file.md) — one-line hook`. Never put memory body content in `MEMORY.md`; one line per memory, no frontmatter.
+
+This is part of your DOCUMENT step — a finding isn't done until it's in `docs/plans/` (the full analysis) **and** memory (the one-line standing fact).
+
+---
+
 ## Codebase map
 
 - `config.py` — shared base config + inert defaults. `paper_config.py` / `live_config.py` override it; `config_active.py` selects based on `--live` in argv. **Change behavior here, not in source.**
