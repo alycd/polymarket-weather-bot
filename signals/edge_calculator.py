@@ -15,7 +15,7 @@ import logging
 import math
 import time as _time
 from scipy.stats import t as _t
-from config_active import MIN_EDGE, CITIES, HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT, FORECAST_T_DF, NO_ENTRY_MIN_PRICE, NO_ENTRY_MAX_PRICE, NO_MIN_ENSEMBLE_STD
+from config_active import MIN_EDGE, CITIES, HIGH_CONVICTION_EDGE, HIGH_CONVICTION_KELLY_MULT, FORECAST_T_DF, NO_ENTRY_MIN_PRICE, NO_ENTRY_MAX_PRICE, NO_MIN_ENSEMBLE_STD, MAX_EDGE_ABS, ENABLE_YES_BETS
 from signals.ensemble import compute_ensemble_stats
 from signals.nowcaster import nowcast_confidence, get_running_max_c, compute_nowcast_bucket_prob
 
@@ -354,6 +354,13 @@ def compute_edge(
     edge = final_model_prob - market_implied_prob
     direction = "YES" if final_model_prob > market_implied_prob else "NO"
 
+    # YES pause (accuracy guard): YES bets are anti-predictive in resolved data
+    # (96% stated vs 43% actual win). Skip entirely when disabled (paper). Inert
+    # in live where ENABLE_YES_BETS=True.
+    if direction == "YES" and not ENABLE_YES_BETS:
+        logger.debug("YES bets disabled (ENABLE_YES_BETS=False) — skip")
+        return None
+
     # Actual entry price: use real CLOB ask (YES entry) or 1-bid (NO entry) if available.
     # Mid-price overstates edge by ~half-spread; actual ask/bid is what we'd really pay.
     if direction == "YES":
@@ -455,6 +462,14 @@ def compute_edge(
                      abs(effective_edge), actual_entry, adaptive_min_edge)
         return None
 
+    # Upper edge cap (accuracy guard): when |edge| is very large the model is
+    # wildly disagreeing with the market, and resolved data shows those are noise
+    # (|edge|>0.40 → 38% win, −17.5% ROI). Skip them. Inert in live (MAX_EDGE_ABS=1.0).
+    if abs(edge) > MAX_EDGE_ABS:
+        logger.debug("Edge %.3f exceeds MAX_EDGE_ABS %.3f — skip (adverse-selection noise)",
+                     abs(edge), MAX_EDGE_ABS)
+        return None
+
     # 8. Kelly sizing using actual entry price (more conservative than mid)
     bankroll = db.get_bankroll()
     p_win = final_model_prob if direction == "YES" else (1.0 - final_model_prob)
@@ -462,8 +477,21 @@ def compute_edge(
     # Filter: require minimum win probability after shrinkage.
     # NO trades: calibration shows 80-90% p_win bucket wins only 45.5% of the time.
     # YES trades: use a lower bar — 55%+ model confidence with >25¢ edge is tradeable.
-    from config_active import MIN_WIN_PROB, MIN_WIN_PROB_YES
+    from config_active import (MIN_WIN_PROB, MIN_WIN_PROB_YES,
+                               LOW_PRICE_WINPROB_THRESHOLD, LOW_PRICE_WINPROB_MARGIN,
+                               MIN_WIN_PROB_FLOOR)
     threshold = MIN_WIN_PROB_YES if direction == "YES" else MIN_WIN_PROB
+    # Favorable-payoff relaxation: below the threshold the win/loss ratio is >1, so
+    # the flat floor needlessly forces a large edge. Relax toward break-even
+    # (= actual_entry) + margin, never below MIN_WIN_PROB_FLOOR. The MIN_EDGE gate
+    # above still binds. NO-only (the proven favorable-payoff zone; also keeps it
+    # from undercutting the YES guard). Inert when THRESHOLD == 0.0 (live).
+    if direction == "NO" and actual_entry < LOW_PRICE_WINPROB_THRESHOLD:
+        relaxed = max(MIN_WIN_PROB_FLOOR, actual_entry + LOW_PRICE_WINPROB_MARGIN)
+        if relaxed < threshold:
+            logger.debug("Low-price relaxation: win-prob floor %.3f → %.3f (entry=%.3f)",
+                         threshold, relaxed, actual_entry)
+            threshold = relaxed
     if p_win < threshold:
         logger.debug("p_win %.3f below threshold %.3f (%s) — skip", p_win, threshold, direction)
         return None

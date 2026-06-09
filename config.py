@@ -53,6 +53,14 @@ OPPORTUNISTIC_MAX_OPEN_TRADES        = 80     # cap: no new opportunistic scan w
 HIGH_CONVICTION_EDGE     = 0.30   # e.g. model=0.90 vs market=0.60
 HIGH_CONVICTION_KELLY_MULT = 2.0
 
+# Upper edge cap and YES toggle (accuracy guards). Inert defaults so live is
+# unaffected; paper_config activates them. MAX_EDGE_ABS=1.0 → no cap (any edge
+# allowed). ENABLE_YES_BETS=True → YES bets allowed. Resolved-trade data shows
+# |edge|>0.40 wins only 38% (−17.5% ROI — adverse selection / noise) and YES is
+# 96% stated vs 43% actual, so paper caps edge at 0.40 and pauses YES.
+MAX_EDGE_ABS    = 1.0
+ENABLE_YES_BETS = True
+
 # Forecast uncertainty to add when building the Gaussian
 # (accounts for systematic errors not captured by model spread alone)
 BASE_FORECAST_STD_C  = 2.00   # °C added in quadrature to ensemble spread
@@ -107,6 +115,18 @@ FORECAST_T_DF           = 4
 # Minimum edge multiplier for very recent markets (resolving within 7 days)
 MIN_EDGE_RECENT_MULTIPLIER = 1.0   # lowered from 1.5 — the 1.5× multiplier blocked all trades since every scanned market falls within 7 days
 MIN_EDGE_RECENT_DAYS       = 7
+
+# ── Favorable-payoff (low-price) win-prob relaxation ──────────────────────────
+# Below an entry price, the win/loss ratio exceeds 1 (you win more than you risk),
+# so the flat MIN_WIN_PROB floor is needlessly strict there — it forces a large
+# edge and starves the high-payoff volume we want. When enabled, the win-prob
+# floor for entries below LOW_PRICE_WINPROB_THRESHOLD is relaxed toward break-even
+# (= entry price) + LOW_PRICE_WINPROB_MARGIN, never below MIN_WIN_PROB_FLOOR. The
+# separate MIN_EDGE gate still binds. INERT by default (threshold 0.0 = never
+# fires) so live is unaffected; paper_config activates it as a forward test.
+LOW_PRICE_WINPROB_THRESHOLD = 0.0    # entry price below which the floor relaxes (0.0 = disabled)
+LOW_PRICE_WINPROB_MARGIN    = 0.12   # required win_prob cushion above break-even
+MIN_WIN_PROB_FLOOR          = 0.50   # never accept worse than a coin flip
 
 # Per-city additive forecast bias corrections (°C added to ensemble mean).
 # Applied on top of per-model bias corrections for cities where ASOS data is
