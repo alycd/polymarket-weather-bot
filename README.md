@@ -181,6 +181,18 @@ cp .env.example .env
 # Generate CLOB API creds: python scripts/gen_clob_creds.py
 ```
 
+#### Wallet addresses (live account)
+
+| Address | Role |
+|---------|------|
+| `0xDa77...c6Ed` | Deposit address — send USDC here to top up; UI shows this in the deposit modal |
+| `0xE857...66F4` | Account/proxy wallet — holds the pUSD balance, what the bot trades from (`POLYMARKET_PROXY_ADDRESS`) |
+| `0x28f6...D48E` | Signer key the bot uses to sign orders (`POLYMARKET_PRIVATE_KEY`) |
+
+Funds deposited via the UI are swept from the deposit address and credited to the
+proxy wallet as **pUSD** (not USDC), so `POLYMARKET_SIGNATURE_TYPE=3` is required
+in `.env` for the bot to see the balance and sign orders against it.
+
 ### Running
 
 ```bash
