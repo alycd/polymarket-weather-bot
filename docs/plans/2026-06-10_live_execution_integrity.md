@@ -1,7 +1,7 @@
 # Live Execution Integrity — Spec
 
 **Date:** 2026-06-10
-**Status:** SPEC — not implemented
+**Status:** IMPLEMENTED 2026-06-10 — pending live rollout (audit + canary)
 **Scope:** live mode only. Paper mode behavior must be bit-for-bit unchanged.
 **Motivation:** audit of the live order path found that live trading is structurally
 fire-and-forget: orders are submitted and assumed filled, NO exits sell a token we
@@ -349,3 +349,102 @@ intentional and should be P&L-positive, but watch the first two weeks of
    closing-soon. Proposed: one repost at a deeper price, then hold.
 3. Reconciler auto-void on two consecutive position mismatches vs. alert-only
    forever — start alert-only; promote to auto-void once we trust the matcher.
+
+---
+
+## 8. Implementation notes (2026-06-10)
+
+Implemented WI-1 … WI-6 plus the WI-5 `--reconcile` code. Open-question decisions
+1/2/3 from the authorizing message were applied (GTC+poll+cancel; EDGE-REVERSED
+one deeper repost then hold / CLOSING-SOON no repost; reconciler alert-only). The
+historical live audit and micro-live canary (rollout steps 3–5) were intentionally
+left OUT OF SCOPE — code only, no live orders placed, real wallet untouched.
+
+**Files changed**
+- `db.py` — WI-1 migration (6 guarded `ALTER TABLE`s) + helpers
+  `update_trade_execution`, `void_trade_refund_stake`, `trim_trade_partial_fill`,
+  `reduce_trade_for_partial_exit`, `get_trades_by_entry_fill_status`,
+  `get_open_live_trades_with_fills`.
+- `config.py` — WI-6 `LIVE_*` params (shared base; inherited by both modes;
+  read only by live code, so inert in paper).
+- `broker/live_broker.py` — WI-2/3/4/5 broker side: `_get_clob_market`,
+  `_get_tick_size`, `_round_to_tick`, `_current_ask`, `_order_match_state`,
+  `_avg_fill_price`, `_post_and_poll` (shared entry/exit poll+cancel helper with
+  an `on_posted` callback), rewritten `execute_live_trade` and `sell_position`,
+  upgraded token-id-matching `sync_positions_to_db`, and `reconcile` +
+  `_finalize_poll_result` + `_classify_order_now` + `_order_age_seconds`.
+  Module docstring rewritten; F12 dead code removed; `FILL_TIMEOUT_S` constant
+  replaced by `config_active.LIVE_FILL_TIMEOUT_S`.
+- `main.py` — WI-2 entry call-site mapping table (with void/partial/pending
+  handling + city-date-cap and pending-NO-bucket refresh); WI-3/4 `_live_exit_scan`
+  + `_closing_soon_liquidity_ok` helpers behind `db.get_mode()=="live"`; WI-5
+  `cmd_reconcile` + `--reconcile` arg/dispatch; `cmd_sync_positions` upgraded to
+  the new summary fields.
+- `daemon.py` — hourly `--reconcile` event at :20 past the hour (no-op in paper).
+- `scripts/test_live_exec.py` — new manual harness (validation §5.3).
+
+**Deviations from the spec (and why)**
+1. **`--paper` flag does not exist.** The spec/CLAUDE.md examples use
+   `--scan --paper`, but the real CLI has no `--paper` flag — paper is the default
+   `--mode paper`. Paper validation was run as `python main.py --scan --dry-run`
+   and `--exit-scan --dry-run` (mode defaults to paper). No code change; just the
+   command form.
+2. **Pending-before-poll persistence is done via an `on_posted` callback inside
+   `_post_and_poll`, not "before submission."** The order id only exists after
+   `post_order`, so the earliest possible persistence of `entry_order_id` +
+   `entry_fill_status='pending'` is the instant after a successful post and before
+   the first poll. This satisfies the daemon-killed-mid-poll guarantee (spec §4
+   bullet 1): any order that reached the book has its id + pending status in the
+   DB before we start waiting on it.
+3. **Added `db.reduce_trade_for_partial_exit`** (not named in WI-1) to implement
+   the WI-4 v1 partial-exit decision (credit proceeds, shrink residual, leave
+   open). It mirrors `trim_trade_partial_fill` but for the exit side.
+4. **`void_trade_refund_stake` writes `outcome_source='live_void'`, `exit_price=0`,
+   `pnl=0`, `resolved_at=now`, `status='void'`** and guards on `status=='open'`.
+   The spec said "status='void', bankroll += size_usdc, notes += reason"; the extra
+   fields keep the row consistent with how `resolve_trade('void')` leaves a row so
+   reporting/calibration queries behave identically.
+5. **Crypto/TSA inheritance is moot today.** `execute_live_trade` is only called
+   from the temperature `cmd_scan` live branch; `cmd_scan_crypto`/`cmd_scan_tsa`
+   have no live branch (paper-only). So those markets never reach the live path
+   and there was nothing to wire. If a live crypto/TSA branch is added later it
+   must pass `market_id` (used for the NO-token + tick lookups) — noted for that
+   future work.
+6. **Reconciler bankroll sanity uses `LIVE_BANKROLL_DRIFT_ALERT` ($5).** The
+   pre-existing `_run_daily_reconciliation_if_due` in `main.py` (a separate, older
+   5%-threshold drift check that runs at scan start) was left untouched to avoid
+   changing scan behavior; the new hourly `reconcile()` is the authoritative one.
+   Two drift checks now coexist; consolidating them is a follow-up, not required.
+7. **EDGE-REVERSED deeper repost** uses `first_limit - 0.05` floored to tick (per
+   decision 2). The first limit is `exit_val * 0.95`, so the repost crosses an
+   additional 5¢ below that, then holds to resolution if still unfilled.
+
+**Validation performed (all on DB copies / dry-run / fakes — no live orders)**
+- WI-1 migration on a copy of `paper_trades.db`: 166 rows unchanged, 6 new columns
+  added empty/NULL. Same migration verified inert on `live_trades.db` (0 trades,
+  bankroll untouched).
+- WI-6: both modes resolve identical `LIVE_*` values (pure inert defaults).
+- Paper invariance: `cmd_exit_scan(dry_run=True)` output is byte-identical between
+  HEAD and the modified tree on a seeded paper DB copy; the only paper-reachable
+  change is the `if is_live` gate, which is False in paper. A full
+  `python main.py --scan --dry-run` runs clean end-to-end.
+- Live dry-run: `python main.py --scan --live --dry-run` runs clean (read-only API,
+  no posts); requote/tick/shares/slip logging verified via a fake (0.001-tick case
+  rounds correctly; slip>0.02 aborts with `requote_slip`).
+- `scripts/test_live_exec.py`: **36/36** checks pass across full fill, partial fill,
+  no fill (void+full refund), cancel-race-then-filled, fills-API lag (3× retry then
+  limit-price fallback), requote-slip abort, NO-token-fetch-failure void, exit
+  resolve-only-on-fill at actual avg price, exit unfilled→held (no fictional
+  resolve, bankroll unchanged), exit partial→residual-open with proceeds credited,
+  and the reconciler pending-sweep finalizing a filled order.
+
+**What remains for live rollout (out of scope here)**
+- Rollout step 3: one-time historical audit of the existing live book with the
+  upgraded reconciler (classify legacy open trades; manually void/repair zombies).
+  The live book is currently empty (zero trades), so this is trivial today but
+  should still be run before the first live scan.
+- Rollout step 5: micro-live canary at `MAX_TRADE_USDC ≈ $2` — 2–3 real entries +
+  one forced exit, verified against the Polymarket UI, before restoring normal
+  sizes. Requires explicit live-trading approval (not granted by this task).
+- Watch the first two weeks of `held_to_resolution` outcomes vs. what the old
+  fictional-price path would have credited (spec §6 risk).

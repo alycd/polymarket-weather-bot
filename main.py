@@ -793,23 +793,83 @@ def cmd_scan(dry_run=False, live=False, opportunistic=False):
                       f"| roll=${result['bankroll_after']:.2f}{RST}")
                 trades_placed += 1
                 traded_ids.add(market_id)
+                _no_bucket_entry = None
                 if signal["direction"] == "NO":
-                    _pending_no_buckets.append((
+                    _no_bucket_entry = (
                         market.get("bucket_lo"),
                         market.get("bucket_hi"),
                         market.get("bucket_unit", "F"),
-                    ))
+                    )
+                    _pending_no_buckets.append(_no_bucket_entry)
 
-                # If --live, also submit the real order to the CLOB
+                # If --live, also submit the real order to the CLOB and correct
+                # the DB row to the actual on-chain fill (WI-2). The paper insert
+                # above created the row + deducted the stake atomically; here we
+                # verify the fill and reconcile price/size/shares — or void it.
                 if live:
-                    live_result = execute_live_trade(market, signal, dry_run=dry_run)
+                    trade_id = result["trade_id"]
+                    live_result = execute_live_trade(market, signal, dry_run=dry_run,
+                                                     trade_id=trade_id)
+                    fs = live_result.get("fill_status")
                     if "skipped" in live_result:
-                        print(f"    {R}      → LIVE ORDER skipped: {live_result['skipped']}{RST}")
+                        # Never reached the book (requote slip, missing token, etc.):
+                        # void the just-created paper row and refund the stake so the
+                        # DB never claims a position that does not exist.
+                        db.void_trade_refund_stake(trade_id, live_result["skipped"])
+                        _open_trades = [t for t in _open_trades if t["trade_id"] != trade_id]
+                        trades_placed -= 1
+                        traded_ids.discard(market_id)
+                        if _no_bucket_entry is not None and _no_bucket_entry in _pending_no_buckets:
+                            _pending_no_buckets.remove(_no_bucket_entry)
+                        print(f"    {R}      → LIVE ORDER skipped ({live_result['skipped']}) "
+                              f"— paper row voided, stake refunded{RST}")
                     elif live_result.get("dry_run"):
                         print(f"    {C}      → [DRY LIVE] order would submit{RST}")
-                    else:
-                        print(f"    {G}      → LIVE ORDER {live_result.get('order_id','?')[:12]} "
-                              f"status={live_result.get('status','?')}{RST}")
+                    elif fs == "filled":
+                        avg = live_result["avg_fill_price"]
+                        fsh = live_result["filled_shares"]
+                        db.update_trade_execution(
+                            trade_id,
+                            entry_order_id=live_result.get("order_id"),
+                            entry_fill_status="filled",
+                            entry_filled_shares=fsh,
+                            entry_price=avg,
+                            size_usdc=round(fsh * avg, 2),
+                            clob_token_no=live_result.get("clob_token_no", ""),
+                        )
+                        print(f"    {G}      → LIVE FILLED {live_result.get('order_id','?')[:12]} "
+                              f"{fsh:.1f}sh @ {avg:.3f}{RST}")
+                    elif fs == "partial":
+                        avg = live_result["avg_fill_price"]
+                        fsh = live_result["filled_shares"]
+                        db.update_trade_execution(
+                            trade_id,
+                            entry_order_id=live_result.get("order_id"),
+                            clob_token_no=live_result.get("clob_token_no", ""))
+                        db.trim_trade_partial_fill(trade_id, fsh, avg)
+                        # Refresh the in-memory cap list with the trimmed size.
+                        _open_trades = [t for t in _open_trades if t["trade_id"] != trade_id]
+                        _open_trades.extend(
+                            t for t in db.get_open_trades() if t["trade_id"] == trade_id)
+                        print(f"    {Y}      → LIVE PARTIAL {fsh:.1f}sh @ {avg:.3f} "
+                              f"— remainder cancelled, size trimmed{RST}")
+                    elif fs == "unfilled":
+                        db.void_trade_refund_stake(trade_id, "entry order unfilled")
+                        _open_trades = [t for t in _open_trades if t["trade_id"] != trade_id]
+                        trades_placed -= 1
+                        traded_ids.discard(market_id)
+                        if _no_bucket_entry is not None and _no_bucket_entry in _pending_no_buckets:
+                            _pending_no_buckets.remove(_no_bucket_entry)
+                        print(f"    {R}      → LIVE UNFILLED — paper row voided, "
+                              f"stake refunded{RST}")
+                    elif fs == "pending":
+                        db.update_trade_execution(
+                            trade_id,
+                            entry_order_id=live_result.get("order_id"),
+                            entry_fill_status="pending",
+                            clob_token_no=live_result.get("clob_token_no", ""))
+                        print(f"    {Y}      → LIVE PENDING {live_result.get('order_id','?')[:12]} "
+                              f"— reconciler will finalize{RST}")
 
         # Cross-market consistency check: find bucket arithmetic violations
         if len(_scan_prices) >= 2:
@@ -1185,6 +1245,193 @@ def cmd_nowcast():
     print()
 
 
+def _live_exit_scan(trade, reason, reason_kind, exit_val, price_ok,
+                    current_mid, dry_run) -> bool:
+    """Live-mode exit execution (WI-3 / WI-4). Returns True if the position was
+    closed (resolved or fully sold), False if held to resolution / left open.
+
+    Sells the token we actually hold, polls for a real fill, and resolves the DB
+    ONLY at the achieved price. Never resolves at a fictional/entry price.
+    """
+    import config_active as cfg_a
+    from broker import live_broker as lb
+    from telegram import send_trade_event
+
+    trade_id    = trade["trade_id"]
+    city        = trade["city"]
+    direction   = trade["direction"]
+    entry_price = trade["entry_price"]
+    target_date = trade["target_date"]
+    size        = trade["size_usdc"]
+
+    # F6: in live we NEVER sell at a fictional price. No live price → hold.
+    if not price_ok or exit_val is None:
+        if not dry_run:
+            db.update_trade_execution(trade_id, exit_fill_status="held_to_resolution")
+            db.log_event("EXIT_HELD", f"{reason} — no live price, holding to resolution",
+                         city=city, icao=trade.get("icao", ""))
+        print(f"    {Y}HOLD-TO-RESOLUTION {trade_id[:8]} | {city} {direction} "
+              f"— no live price ({reason}){RST}")
+        return False
+
+    # ── Token selection (F1): sell the token we hold ──────────────────────────
+    if direction == "NO":
+        token = trade.get("clob_token_no") or ""
+        if not token:
+            # Legacy live row — fetch + persist the NO token at exit time.
+            token = lb._get_no_token_id({"market_id": trade.get("market_id", ""),
+                                         "clob_token_yes": trade.get("clob_token_yes", "")}) or ""
+            if token and not dry_run:
+                db.update_trade_execution(trade_id, clob_token_no=token)
+    else:
+        token = trade.get("clob_token_yes") or ""
+    if not token:
+        print(f"    {R}EXIT skip {trade_id[:8]}: no token id to sell{RST}")
+        return False
+
+    # ── Share count (F7): real filled shares, floored to 2dp (never oversell) ──
+    held = trade.get("entry_filled_shares")
+    if held is None:
+        held = size / entry_price if entry_price else 0.0
+    import math
+    shares = math.floor(held * 100) / 100.0
+    if shares < 1.0:
+        print(f"    {R}EXIT skip {trade_id[:8]}: held shares {shares:.2f} < 1{RST}")
+        return False
+
+    # Tick size for SELL rounding.
+    clob_market = lb._get_clob_market(trade.get("market_id", ""))
+    tick = lb._get_tick_size(clob_market)
+
+    # ── CLOSING-SOON liquidity gate (F6) ───────────────────────────────────────
+    # Time-based exits fire into the thinnest book of the day. Require a live bid
+    # within LIVE_EXIT_MAX_DISCOUNT of fair AND enough bid-side depth to absorb
+    # the position; otherwise hold (resolution pays full value hours later).
+    if reason_kind == "closing_soon":
+        ok, note = _closing_soon_liquidity_ok(trade, direction, exit_val, shares,
+                                              cfg_a.LIVE_EXIT_MAX_DISCOUNT)
+        if not ok:
+            if not dry_run:
+                db.update_trade_execution(trade_id, exit_fill_status="held_to_resolution")
+                db.log_event("EXIT_HELD", f"{reason} — liquidity gate: {note}",
+                             city=city, icao=trade.get("icao", ""))
+            print(f"    {Y}HOLD-TO-RESOLUTION {trade_id[:8]} | {city} {direction} "
+                  f"— closing-soon book too thin ({note}){RST}")
+            return False
+
+    if dry_run:
+        print(f"    {Y}[DRY LIVE] would sell {shares:.2f} {direction}-token @ "
+              f"{(exit_val*0.95):.3f} (tick {tick}) [{reason}]{RST}")
+        return False
+
+    # ── Submit & poll (F5): resolve only on confirmed fills at actual price ────
+    def _do_sell(limit_price):
+        try:
+            return lb.sell_position(token, shares, min_price=limit_price, tick=tick,
+                                    timeout_s=cfg_a.LIVE_EXIT_FILL_TIMEOUT_S)
+        except Exception as e:
+            logger.warning("Live sell failed for %s: %s", trade_id[:8], e)
+            return {"error": str(e)}
+
+    first_limit = exit_val * 0.95
+    sell_result = _do_sell(first_limit)
+    fs = sell_result.get("fill_status")
+
+    # EDGE-REVERSED: one deeper repost if the first sell timed out unfilled, then
+    # hold (decision 2). CLOSING-SOON: no repost (decision 2).
+    if fs in (None, "unfilled", "pending") and "error" not in sell_result \
+            and reason_kind == "edge_reversed":
+        deeper = lb._round_to_tick(max(0.01, first_limit - 0.05), tick, "down")
+        print(f"    {Y}EDGE-REVERSED first sell unfilled — reposting deeper @ "
+              f"{deeper:.3f}{RST}")
+        sell_result = _do_sell(deeper)
+        fs = sell_result.get("fill_status")
+
+    if "error" in sell_result:
+        print(f"    {R}SELL order failed: {sell_result['error']} — holding{RST}")
+        db.update_trade_execution(trade_id, exit_fill_status="held_to_resolution")
+        db.log_event("EXIT_HELD", f"{reason} — sell error: {sell_result['error']}",
+                     city=city, icao=trade.get("icao", ""))
+        return False
+
+    if fs == "filled":
+        avg = sell_result["avg_fill_price"]
+        sold = sell_result.get("filled_shares") or shares
+        outcome = "won" if (avg - entry_price) >= 0 else "lost"
+        db.update_trade_execution(trade_id, exit_order_id=sell_result.get("order_id"),
+                                  exit_fill_status="filled")
+        db.resolve_trade(trade_id, None, outcome, avg, outcome_source="exit_scan")
+        db.log_event("EXIT_SCAN", reason, city=city, icao=trade.get("icao", ""))
+        pnl = sold * avg - size
+        send_trade_event("WIN" if outcome == "won" else "LOSS",
+                         direction=direction, city=city, target_date=target_date,
+                         entry_price=entry_price, bucket_lo=trade["bucket_lo"],
+                         bucket_hi=trade["bucket_hi"], bucket_unit=trade["bucket_unit"],
+                         edge=trade["edge"], stake=size, pnl=pnl)
+        print(f"    {G if pnl>=0 else R}LIVE EXIT FILLED {trade_id[:8]} "
+              f"{sold:.1f}sh @ {avg:.3f}  pnl=${pnl:+.2f}{RST}")
+        return True
+
+    if fs == "partial":
+        avg = sell_result["avg_fill_price"]
+        sold = sell_result.get("filled_shares") or 0.0
+        # Credit proceeds, leave residual open (no blended price; WI-4 v1 decision).
+        db.update_trade_execution(trade_id, exit_order_id=sell_result.get("order_id"))
+        db.reduce_trade_for_partial_exit(trade_id, sold, avg)
+        db.log_event("EXIT_PARTIAL",
+                     f"{reason} — sold {sold:.2f}@{avg:.3f}, residual held",
+                     city=city, icao=trade.get("icao", ""))
+        print(f"    {Y}LIVE EXIT PARTIAL {trade_id[:8]} sold {sold:.1f}sh @ {avg:.3f} "
+              f"— residual held to resolution{RST}")
+        return False
+
+    # Unfilled / pending: hold to resolution (F5). --resolve settles from weather.
+    db.update_trade_execution(trade_id, exit_order_id=sell_result.get("order_id"),
+                              exit_fill_status="held_to_resolution")
+    db.log_event("EXIT_UNFILLED", f"{reason} — sell unfilled, holding to resolution",
+                 city=city, icao=trade.get("icao", ""))
+    print(f"    {Y}HOLD-TO-RESOLUTION {trade_id[:8]} | {city} {direction} "
+          f"— exit sell unfilled ({reason}){RST}")
+    return False
+
+
+def _closing_soon_liquidity_ok(trade, direction, exit_val, shares, max_discount):
+    """For a CLOSING-SOON live exit, require a live bid within max_discount of
+    fair (exit_val) and bid-side depth >= our share count at acceptable levels.
+    Returns (ok: bool, note: str). The bid is on the token WE hold:
+      NO  position → NO-token bid  = 1 - (YES-token best ask)
+      YES position → YES-token bid =     (YES-token best bid)
+    """
+    from data.polymarket import get_clob_orderbook
+    yes_token = trade.get("clob_token_yes", "")
+    try:
+        book = get_clob_orderbook(yes_token)
+        yes_bids = sorted(((float(b["price"]), float(b["size"])) for b in book.get("bids", [])),
+                          key=lambda x: -x[0])
+        yes_asks = sorted(((float(a["price"]), float(a["size"])) for a in book.get("asks", [])),
+                          key=lambda x: x[0])
+    except Exception as e:
+        return False, f"book fetch failed: {e}"
+
+    floor_price = exit_val - max_discount
+    if direction == "NO":
+        # Selling NO = buying back YES from the ask side. NO-bid level n has
+        # price (1 - yes_ask_n) and depth = that ask level's size.
+        levels = [(round(1.0 - p, 6), sz) for p, sz in yes_asks]
+    else:
+        levels = list(yes_bids)
+
+    if not levels:
+        return False, "no resting bids"
+    best = levels[0][0]
+    if best < floor_price:
+        return False, f"best bid {best:.3f} < floor {floor_price:.3f}"
+    depth = sum(sz for px, sz in levels if px >= floor_price)
+    if depth < shares:
+        return False, f"depth {depth:.1f} < {shares:.1f} shares above floor"
+    return True, f"best {best:.3f} depth {depth:.1f}"
+
+
 # ── --exit-scan ───────────────────────────────────────────────────────────────
 
 def cmd_exit_scan(dry_run=False):
@@ -1246,10 +1493,12 @@ def cmd_exit_scan(dry_run=False):
         # ── Check exit conditions ─────────────────────────────────────────────
 
         reason = None
+        reason_kind = None   # 'take_profit' | 'edge_reversed' | 'closing_soon'
 
         # 1. Take profit (requires live price)
         if reason is None and price_ok and gain_multiple >= TAKE_PROFIT_MULTIPLE:
             reason = f"TAKE-PROFIT {gain_multiple:.1f}x (entry={entry_price:.3f} now={exit_val:.3f})"
+            reason_kind = "take_profit"
 
         # 2. Edge reversal (requires live price)
         if reason is None and price_ok and model_prob is not None:
@@ -1261,6 +1510,7 @@ def cmd_exit_scan(dry_run=False):
             if current_edge < -EDGE_REVERSAL_MIN:
                 reason = (f"EDGE-REVERSED model={model_prob:.3f} market={current_mid:.3f} "
                           f"edge={current_edge:+.3f}")
+                reason_kind = "edge_reversed"
 
         # 3. Market closing soon — runs regardless of price availability
         if reason is None and target_date:
@@ -1279,6 +1529,7 @@ def cmd_exit_scan(dry_run=False):
                 if 0 < hours_left < CLOSE_SOON_HOURS:
                     no_price_note = " (no live price — using entry as fallback)" if not price_ok else ""
                     reason = f"CLOSING-SOON {hours_left:.1f}h left (exit into remaining liquidity){no_price_note}"
+                    reason_kind = "closing_soon"
             except Exception:
                 pass
 
@@ -1292,10 +1543,20 @@ def cmd_exit_scan(dry_run=False):
             continue
 
         # ── Execute exit ──────────────────────────────────────────────────────
-        # When no live price is available (CLOB gone near resolution), use entry_price
-        # as a conservative fallback so the exit can still be recorded and submitted.
-        if exit_val is None:
+        is_live = (db.get_mode() == "live")
+
+        # PAPER fallback (unchanged): when no live price is available, use entry_price
+        # so the exit can still be recorded. In LIVE this fallback is forbidden —
+        # we never resolve at a fictional price (F6); the live branch handles it.
+        if exit_val is None and not is_live:
             exit_val = entry_price
+
+        if is_live:
+            closed = _live_exit_scan(trade, reason, reason_kind, exit_val, price_ok,
+                                     current_mid, dry_run)
+            if closed:
+                exited += 1
+            continue
 
         shares = size / entry_price
         pnl_est = shares * exit_val - size
@@ -1307,17 +1568,6 @@ def cmd_exit_scan(dry_run=False):
 
         if not dry_run:
             outcome = "won" if pnl_est >= 0 else "lost"
-            # For live mode: actually submit SELL order to CLOB before marking resolved
-            if not dry_run and db.get_mode() == "live":
-                try:
-                    from broker.live_broker import sell_position
-                    token = trade.get("clob_token_yes", "")
-                    if token:
-                        sell_result = sell_position(token, shares, min_price=exit_val * 0.95)
-                        if "error" in sell_result:
-                            print(f"    {R}SELL order failed: {sell_result['error']}{RST}")
-                except Exception as e:
-                    logger.warning("Live sell failed for %s: %s", trade_id[:8], e)
             db.resolve_trade(trade_id, None, outcome, exit_val, outcome_source="exit_scan")
             db.log_event("EXIT_SCAN", reason, city=city, icao=trade.get("icao", ""))
             from telegram import send_trade_event
@@ -1410,21 +1660,40 @@ def cmd_resolve(dry_run=False):
 # ── --sync-positions ───────────────────────────────────────────────────────────
 
 def cmd_sync_positions():
-    """Pull actual CLOB positions and reconcile with our internal DB."""
+    """Pull actual CLOB positions and reconcile with our internal DB (verbose, manual)."""
     if db.get_mode() != "live":
         print(f"  {Y}sync-positions only available in live mode{RST}")
         return
     from broker.live_broker import sync_positions_to_db, redeem_positions
     print(f"\n{B}{C}SYNC POSITIONS — {date.today().isoformat()}{RST}\n")
-    result = sync_positions_to_db()
+    result = sync_positions_to_db(alert=False)
     print(f"  CLOB positions: {result['clob_positions']}")
     print(f"  Matched to DB:  {result['synced']}")
-    print(f"  Not on CLOB:    {result['not_filled']}  (orders didn't fill)")
+    print(f"  Mismatches:     {result['not_filled']}  (filled in DB, not on chain)")
+    print(f"  Orphans:        {result.get('orphans', 0)}  (on chain, not in DB)")
     print()
     redeem = redeem_positions()
     claimed = redeem.get("usdc_claimed", 0)
     if claimed > 0:
         print(f"  {G}Redeemed: +${claimed:.4f} USDC{RST}")
+    print()
+
+
+def cmd_reconcile():
+    """Hourly DB↔chain reconciliation (live only; no-op in paper). See spec WI-5."""
+    if db.get_mode() != "live":
+        # Paper mode: nothing on-chain to reconcile. Silent no-op so the daemon's
+        # hourly :20 event is harmless when running in paper mode.
+        logger.debug("--reconcile is a no-op in paper mode")
+        return
+    from broker.live_broker import reconcile
+    print(f"\n{B}{C}RECONCILE — {date.today().isoformat()}{RST}\n")
+    summary = reconcile()
+    print(f"  Stale orders cancelled: {summary['stale_cancelled']}")
+    print(f"  Pending trades finalized: {summary['pending_finalized']}")
+    print(f"  Position mismatches: {summary['mismatches']}")
+    print(f"  Orphan positions: {summary['orphans']}")
+    print(f"  Bankroll drift: ${summary['bankroll_drift']:+.2f}")
     print()
 
 
@@ -1452,6 +1721,9 @@ def main():
                         help="Exit open positions that hit take-profit, edge-reversal, or closing-soon")
     parser.add_argument("--sync-positions",     action="store_true",
                         help="Pull real CLOB positions and reconcile with DB; redeem any winnings")
+    parser.add_argument("--reconcile",           action="store_true",
+                        help="Live-only: finalize pending fills, cancel stale orders, "
+                             "alert on DB↔chain divergence (no-op in paper)")
     parser.add_argument("--monitor",            action="store_true")
     parser.add_argument("--stats",              action="store_true")
     parser.add_argument("--positions",          action="store_true")
@@ -1558,6 +1830,8 @@ def main():
             release_job_lock("exit-scan", lock_fd)
     elif getattr(args, 'sync_positions', False):
         cmd_sync_positions()
+    elif getattr(args, 'reconcile', False):
+        cmd_reconcile()
     elif args.monitor:
         print(f"\n{Y}--monitor is deprecated: stop-loss is disabled.{RST}\n")
     elif args.stats:

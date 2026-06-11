@@ -271,6 +271,37 @@ def init_db():
             conn.execute("ALTER TABLE trades ADD COLUMN clob_token_yes TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass
+        # ── Live execution integrity (2026-06-10) ──────────────────────────────
+        # Persist on-chain execution identity so live trades can be verified,
+        # reconciled, and exited against the token we actually hold. All default
+        # to ''/NULL so paper rows and pre-migration rows are unaffected.
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN clob_token_no TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN entry_order_id TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        # '' (paper / pre-migration) | 'pending' | 'filled' | 'partial' | 'unfilled'
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN entry_fill_status TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        # actual shares held on-chain (NULL = unknown / legacy)
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN entry_filled_shares REAL")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN exit_order_id TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        # '' | 'pending' | 'filled' | 'partial' | 'unfilled' | 'held_to_resolution'
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN exit_fill_status TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
         # bankroll_fix_applied migration has been fully applied and retired.
         # Bankroll is now authoritative from set_bankroll() after manual correction (2026-05-24).
         conn.execute("UPDATE trades SET bankroll_fix_applied=1 WHERE bankroll_fix_applied=0")
@@ -822,6 +853,161 @@ def already_in_market(market_id) -> bool:
             (market_id,)
         ).fetchone()
         return row is not None
+
+
+# ── Live execution integrity helpers (2026-06-10) ──────────────────────────────
+
+def update_trade_execution(trade_id, *, clob_token_no=None, entry_order_id=None,
+                           entry_fill_status=None, entry_filled_shares=None,
+                           entry_price=None, size_usdc=None,
+                           exit_order_id=None, exit_fill_status=None):
+    """Correct a live trade row with actual on-chain execution details.
+
+    Live-only: the row is first created by the (shared) paper path with
+    scan-time assumptions, then this corrects it to the real fill. Any of the
+    optional fields may be passed; only the provided ones are written.
+
+    If both entry_price and size_usdc are supplied, the difference between the
+    original size_usdc and the new size_usdc is refunded to (or deducted from)
+    the bankroll in the SAME transaction — keeping resolve_trade's
+    shares = size_usdc / entry_price identity exact for the corrected row.
+    """
+    fields = {
+        "clob_token_no":       clob_token_no,
+        "entry_order_id":      entry_order_id,
+        "entry_fill_status":   entry_fill_status,
+        "entry_filled_shares": entry_filled_shares,
+        "entry_price":         entry_price,
+        "size_usdc":           size_usdc,
+        "exit_order_id":       exit_order_id,
+        "exit_fill_status":    exit_fill_status,
+    }
+    sets = {k: v for k, v in fields.items() if v is not None}
+    if not sets:
+        return
+    with _conn() as conn:
+        if size_usdc is not None:
+            row = conn.execute(
+                "SELECT size_usdc FROM trades WHERE trade_id=?", (trade_id,)
+            ).fetchone()
+            if row is not None:
+                orig_size = row["size_usdc"] or 0.0
+                refund = orig_size - float(size_usdc)
+                if abs(refund) > 1e-9:
+                    conn.execute("UPDATE bankroll SET balance = balance + ? WHERE id=1",
+                                 (refund,))
+        assignments = ", ".join(f"{k}=?" for k in sets)
+        params = list(sets.values()) + [trade_id]
+        conn.execute(f"UPDATE trades SET {assignments} WHERE trade_id=?", params)
+    logger.info("Trade %s execution updated: %s",
+                trade_id[:8], ", ".join(f"{k}={sets[k]}" for k in sets))
+
+
+def void_trade_refund_stake(trade_id, reason: str):
+    """Void a never-filled live trade: refund full stake, mark status='void'.
+
+    Bankroll math mirrors resolve_trade('void'): bankroll += size_usdc (the stake
+    pre-deducted at entry returns in full). Records the reason in notes and sets
+    entry_fill_status='unfilled' so the row remains for audit. Single transaction.
+    """
+    with _conn() as conn:
+        trade = conn.execute("SELECT * FROM trades WHERE trade_id=?", (trade_id,)).fetchone()
+        if not trade:
+            logger.warning("void_trade_refund_stake: trade %s not found", trade_id[:8])
+            return
+        trade = dict(trade)
+        if trade["status"] != "open":
+            logger.warning("void_trade_refund_stake: trade %s not open (status=%s) — skipping",
+                           trade_id[:8], trade["status"])
+            return
+        size = trade["size_usdc"] or 0.0
+        old_notes = trade.get("notes") or ""
+        new_notes = (old_notes + f" | VOID: {reason}").strip(" |")
+        conn.execute("""
+            UPDATE trades SET status='void', exit_price=0.0, pnl=0.0,
+                              resolved_at=?, outcome_source='live_void',
+                              entry_fill_status='unfilled', notes=?
+            WHERE trade_id=?
+        """, (datetime.utcnow().isoformat(), new_notes, trade_id))
+        conn.execute("UPDATE bankroll SET balance = balance + ? WHERE id=1", (size,))
+    logger.info("Trade %s VOIDED, refunded $%.2f: %s", trade_id[:8], size, reason)
+    log_event("TRADE_VOID", f"{reason} (refund ${size:.2f})",
+              city=trade.get("city"), icao=trade.get("icao"))
+
+
+def trim_trade_partial_fill(trade_id, filled_shares: float, fill_price: float):
+    """Shrink a live trade to its actually-filled fraction and refund the remainder.
+
+    Sets entry_price=fill_price, size_usdc=filled_shares*fill_price,
+    entry_filled_shares=filled_shares, entry_fill_status='partial', and refunds
+    (orig_size - new_size) to the bankroll in a single transaction. Keeps
+    resolve_trade's shares = size_usdc / entry_price identity exact.
+    """
+    new_size = round(filled_shares * fill_price, 6)
+    with _conn() as conn:
+        trade = conn.execute("SELECT * FROM trades WHERE trade_id=?", (trade_id,)).fetchone()
+        if not trade:
+            logger.warning("trim_trade_partial_fill: trade %s not found", trade_id[:8])
+            return
+        orig_size = trade["size_usdc"] or 0.0
+        refund = orig_size - new_size
+        if abs(refund) > 1e-9:
+            conn.execute("UPDATE bankroll SET balance = balance + ? WHERE id=1", (refund,))
+        conn.execute("""
+            UPDATE trades SET entry_price=?, size_usdc=?, entry_filled_shares=?,
+                              entry_fill_status='partial'
+            WHERE trade_id=?
+        """, (fill_price, new_size, filled_shares, trade_id))
+    logger.info("Trade %s trimmed to partial fill: %.2f shares @ %.3f ($%.2f), refunded $%.2f",
+                trade_id[:8], filled_shares, fill_price, new_size, orig_size - new_size)
+
+
+def reduce_trade_for_partial_exit(trade_id, sold_shares: float, sold_price: float):
+    """Credit proceeds of a partial EXIT sell and shrink the residual open position.
+
+    Used when an exit sell only partially fills: we keep the trade OPEN with the
+    unsold residual (size_usdc / entry_filled_shares reduced by the sold fraction)
+    and credit sold_shares*sold_price to the bankroll. Avoids inventing a blended
+    resolution price; the residual resolves normally later. Single transaction.
+    """
+    proceeds = round(sold_shares * sold_price, 6)
+    with _conn() as conn:
+        trade = conn.execute("SELECT * FROM trades WHERE trade_id=?", (trade_id,)).fetchone()
+        if not trade:
+            logger.warning("reduce_trade_for_partial_exit: trade %s not found", trade_id[:8])
+            return
+        trade = dict(trade)
+        entry_price = trade["entry_price"]
+        held = trade["entry_filled_shares"]
+        if held is None:
+            held = (trade["size_usdc"] or 0.0) / entry_price if entry_price else 0.0
+        residual_shares = max(0.0, held - sold_shares)
+        residual_size = round(residual_shares * entry_price, 6)
+        conn.execute("""
+            UPDATE trades SET size_usdc=?, entry_filled_shares=?,
+                              exit_fill_status='partial'
+            WHERE trade_id=?
+        """, (residual_size, residual_shares, trade_id))
+        conn.execute("UPDATE bankroll SET balance = balance + ? WHERE id=1", (proceeds,))
+    logger.info("Trade %s partial exit: sold %.2f @ %.3f (+$%.2f), residual %.2f shares",
+                trade_id[:8], sold_shares, sold_price, proceeds, residual_shares)
+
+
+def get_trades_by_entry_fill_status(status: str) -> list[dict]:
+    """Return all trades with a given entry_fill_status (e.g. 'pending')."""
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM trades WHERE entry_fill_status=?", (status,)
+        ).fetchall()]
+
+
+def get_open_live_trades_with_fills() -> list[dict]:
+    """Open trades whose entry is confirmed filled — used by the reconciler's
+    position cross-check (paper rows have entry_fill_status='')."""
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM trades WHERE status='open' AND entry_fill_status='filled'"
+        ).fetchall()]
 
 
 # ── Daily PnL ─────────────────────────────────────────────────────────────────

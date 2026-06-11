@@ -140,6 +140,21 @@ LOW_PRICE_WINPROB_THRESHOLD = 0.0    # entry price below which the floor relaxes
 LOW_PRICE_WINPROB_MARGIN    = 0.12   # required win_prob cushion above break-even
 MIN_WIN_PROB_FLOOR          = 0.50   # never accept worse than a coin flip
 
+# ── Live execution integrity ──────────────────────────────────────────────────
+# Parameters governing the live CLOB order lifecycle: fill verification, requote
+# slip protection, stale-order cleanup, and DB↔chain reconciliation. These are
+# read ONLY by live-mode code paths (broker.live_broker + main.py live branches +
+# the --reconcile command), so they are inert in paper mode even though both
+# paper_config and live_config inherit them via `from config import *`. Defined
+# here (the shared base) so the two override files stay in sync without edits.
+LIVE_FILL_POLL_S            = 3      # poll interval (s) while waiting for a fill
+LIVE_FILL_TIMEOUT_S         = 30     # entry: cancel unfilled remainder after this many s
+LIVE_EXIT_FILL_TIMEOUT_S    = 60     # exit: more patience than entries, but still bounded
+LIVE_MAX_REQUOTE_SLIP       = 0.02   # abort entry if the ask moved this much since scan
+LIVE_EXIT_MAX_DISCOUNT      = 0.10   # closing-soon: max discount to fair before holding
+LIVE_MAX_ORDER_AGE_S        = 600    # reconciler cancels resting orders older than this (s)
+LIVE_BANKROLL_DRIFT_ALERT   = 5.0    # $ divergence (DB vs chain) before alerting
+
 # Per-city additive forecast bias corrections (°C added to ensemble mean).
 # Applied on top of per-model bias corrections for cities where ASOS data is
 # unavailable (international stations) or where systematic grid-point mismatch exists.

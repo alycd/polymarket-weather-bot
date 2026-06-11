@@ -142,6 +142,15 @@ def _build_schedule(now: datetime) -> list[tuple[datetime, str, str]]:
                     events.append((fire, "--scan",
                                   f"30m opportunistic scan {hour:02d}:{minute:02d} UTC"))
 
+        # Hourly live reconcile at :20 past the hour — clear of the :00/:30 scan
+        # grid and the 08:15 calibration slot. Finalizes pending fills, cancels
+        # stale orders, and alerts on DB↔chain divergence. No-op in paper mode.
+        for hour in range(24):
+            fire = datetime(d.year, d.month, d.day, hour, 20, tzinfo=timezone.utc)
+            if fire > now:
+                events.append((fire, "--reconcile",
+                              f"Hourly reconcile {hour:02d}:20 UTC"))
+
     events.sort(key=lambda x: x[0])
     return events
 
