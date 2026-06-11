@@ -11,8 +11,14 @@ What gets copied:
   bias_corrections  — per-city/model/month error corrections
   climatology       — 30-year WMO baselines
 
+Also copied: cal_shrinkage_* keys from kv_store. The shrinkage factor is computed
+from resolved trades, which live starts with none of — without seeding it,
+get_shrinkage_factor() falls back to 1.0 and live trades WITHOUT the
+overconfidence correction paper runs with.
+
 What stays fresh in live:
-  trades, daily_pnl, bankroll, scan_log, markets, price_history, kv_store
+  trades, daily_pnl, bankroll, scan_log, markets, price_history,
+  kv_store (except cal_shrinkage_* keys)
 """
 
 import os
@@ -63,6 +69,23 @@ def main():
 
         rows_after = live.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         print(f"  {table:<20} — {rows_before} → {rows_after} rows")
+
+    # Seed calibration shrinkage factors. These normally come from resolved
+    # trades, which live has none of at migration time — without this, live
+    # falls back to shrinkage 1.0 (no overconfidence correction).
+    shrink_rows = paper.execute(
+        "SELECT key, value, updated_at FROM kv_store WHERE key LIKE 'cal_shrinkage_%'"
+    ).fetchall()
+    if shrink_rows:
+        live.executemany(
+            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)",
+            shrink_rows,
+        )
+        live.commit()
+        for key, value, _ in shrink_rows:
+            print(f"  {key:<20} — seeded ({value})")
+    else:
+        print("  cal_shrinkage_*      — none in paper, skipping")
 
     paper.close()
     live.close()

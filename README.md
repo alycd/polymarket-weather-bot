@@ -255,6 +255,7 @@ After running in paper mode for calibration, use the included migration script t
 | `model_forecasts` | ~1,600 | Historical NWP predictions (needed to recompute bias) |
 | `bias_corrections` | ~36 | Per-city/model/month error corrections |
 | `climatology` | varies | 30-year WMO baselines |
+| `kv_store` (`cal_shrinkage_*` only) | 1 | Calibration shrinkage factor — computed from resolved trades, which live starts with none of; without seeding it live falls back to 1.0 (no overconfidence correction) |
 
 Trades, P&L, bankroll, and operational state start fresh in the live DB.
 
