@@ -24,6 +24,32 @@ from metrics.sharpe import compute_sharpe
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
+# ── HTTP Basic Auth ────────────────────────────────────────────────────────────
+# Set DASHBOARD_USER / DASHBOARD_PASSWORD in .env to require login on every
+# route (pages and /api/*). With no password set, the dashboard stays open and
+# logs a warning at startup — don't run it that way on a public interface.
+import secrets
+
+_AUTH_USER = os.getenv("DASHBOARD_USER", "admin").strip()
+_AUTH_PASS = os.getenv("DASHBOARD_PASSWORD", "").strip()
+
+
+@app.before_request
+def _require_auth():
+    if not _AUTH_PASS:
+        return None
+    auth = request.authorization
+    if (auth and auth.type == "basic"
+            and secrets.compare_digest(auth.username or "", _AUTH_USER)
+            and secrets.compare_digest(auth.password or "", _AUTH_PASS)):
+        return None
+    return (
+        "Authentication required",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Polymarket Bot Dashboard"'},
+    )
+
+
 # ── Response cache ─────────────────────────────────────────────────────────────
 _api_cache: dict = {}
 _api_lock = threading.Lock()
@@ -493,4 +519,9 @@ if __name__ == "__main__":
     )
     db.init_db()
     print("\n  Dashboard → http://localhost:5050\n")
+    if _AUTH_PASS:
+        print(f"  Auth: HTTP Basic enabled (user: {_AUTH_USER})\n")
+    else:
+        print("  ⚠ WARNING: no DASHBOARD_PASSWORD set in .env — dashboard is "
+              "OPEN to anyone who can reach this host on port 5050.\n")
     app.run(host="0.0.0.0", port=5050, debug=False, threaded=True)
