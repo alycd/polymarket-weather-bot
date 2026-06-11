@@ -97,9 +97,11 @@ function renderHero(d) {
       ' · real ' + (p.realized_pnl>=0?'+$':'-$') + Math.abs(p.realized_pnl).toFixed(2) +
       ' · ROI ' + (p.pct_return>=0?'+':'') + p.pct_return.toFixed(1) + '% (est.)';
   } else {
-    document.getElementById('hv-br-sub').textContent  = p.n_open + ' open · $' + p.deployed.toFixed(0) + ' deployed';
+    document.getElementById('hv-br-sub').textContent  = p.n_open + ' open · $' + p.deployed.toFixed(0) + ' deployed' +
+      (p.equity != null ? ' · equity $' + p.equity.toFixed(2) : '');
     const startBr = p.initial != null ? p.initial : 1000;
-    document.getElementById('hv-pnl-sub').textContent = (p.pct_return>=0?'+':'') + p.pct_return.toFixed(1) + '% · $' + startBr.toFixed(0) + ' starting';
+    document.getElementById('hv-pnl-sub').textContent = (p.pct_return>=0?'+':'') + p.pct_return.toFixed(1) + '% · $' + startBr.toFixed(0) + ' starting' +
+      (p.unrealized_pnl != null ? ' · unrl ' + (p.unrealized_pnl>=0?'+$':'-$') + Math.abs(p.unrealized_pnl).toFixed(2) : '');
   }
   document.getElementById('hv-wr-sub').textContent  = p.n_wins + 'W / ' + p.n_losses + 'L · ' + p.n_resolved + ' closed';
   animCount('hv-br',  p.bankroll,  v => '$' + v.toFixed(2));
@@ -379,10 +381,16 @@ function renderEquity(rows) {
   }
   const labels   = rows.map(r => r.pnl_date.slice(5));   // MM-DD
   const bankroll = rows.map(r => r.ending_bankroll);
-  const cumPnl   = (() => {
-    const start = rows[0].starting_bankroll;
-    return rows.map(r => +(r.ending_bankroll - start).toFixed(2));
-  })();
+  // Cumulative realized PnL from resolved trades (server-computed). The old
+  // fallback (bankroll delta vs first snapshot) tracks cash flow, not profit —
+  // it swings with stake deployment and its baseline excludes capital that was
+  // already deployed at the first snapshot.
+  const cumPnl   = rows[0].cum_realized != null
+    ? rows.map(r => r.cum_realized)
+    : (() => {
+        const start = rows[0].starting_bankroll;
+        return rows.map(r => +(r.ending_bankroll - start).toFixed(2));
+      })();
   const lastPnl  = cumPnl[cumPnl.length - 1];
   const hint = document.getElementById('equity-hint');
   if (hint) hint.textContent = (lastPnl >= 0 ? '+$' : '-$') + Math.abs(lastPnl).toFixed(2) + ' cumulative';

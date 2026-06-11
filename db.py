@@ -1036,6 +1036,24 @@ def get_daily_pnl() -> list[dict]:
         ).fetchall()]
 
 
+def get_daily_realized_pnl() -> dict[str, float]:
+    """Realized P&L from resolved trades, summed by resolution date.
+
+    This is the true profit series — unlike daily_pnl's bankroll deltas, it
+    is unaffected by stake deployment cash flows.
+    """
+    with _conn() as conn:
+        return {
+            r["d"]: r["pnl"]
+            for r in conn.execute("""
+                SELECT substr(resolved_at, 1, 10) AS d, SUM(pnl) AS pnl
+                FROM trades
+                WHERE status IN ('won', 'lost', 'stop_loss') AND pnl IS NOT NULL
+                GROUP BY d ORDER BY d
+            """)
+        }
+
+
 # ── Scan log ──────────────────────────────────────────────────────────────────
 
 def log_event(event_type: str, message: str, city=None, icao=None, data=None):

@@ -16,11 +16,15 @@ def compute_pnl_summary() -> dict:
     initial  = 1000.0
     pct_return = total_pnl / initial * 100
 
+    # Stakes are pre-deducted from bankroll at entry (see db.resolve_trade),
+    # so bankroll IS spendable cash — subtracting deployed again would
+    # double-count the open stakes. Equity = cash + open stakes at cost.
     return {
         "bankroll":   bankroll,
         "initial":    initial,
         "deployed":   deployed,
-        "available":  max(0.0, bankroll - deployed),
+        "available":  bankroll,
+        "equity":     bankroll + deployed,
         "total_pnl":  total_pnl,
         "pct_return": pct_return,
         "n_resolved": len(resolved),

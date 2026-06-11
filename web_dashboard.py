@@ -311,8 +311,28 @@ def _build_polymarket_live_dashboard(db_path: str) -> dict:
         "history": rows_closed,
         "stations": stations,
         "ops": get_ops_snapshot(),
-        "pnl_history": db.get_daily_pnl(),
+        "pnl_history": _pnl_history_with_realized(),
     }
+
+
+def _pnl_history_with_realized() -> list[dict]:
+    """daily_pnl rows annotated with cumulative realized P&L from resolved trades.
+
+    The chart previously plotted ending_bankroll minus the first row's
+    starting_bankroll as "Cum PnL" — but bankroll is cash, which swings with
+    stake deployment, and the first snapshot was taken mid-deployment, so the
+    line overstated profit. cum_realized is the true profit curve.
+    """
+    rows = db.get_daily_pnl()
+    daily = db.get_daily_realized_pnl()
+    dates = sorted(daily)
+    cum, i = 0.0, 0
+    for row in rows:
+        while i < len(dates) and dates[i] <= row["pnl_date"]:
+            cum += daily[dates[i]]
+            i += 1
+        row["cum_realized"] = round(cum, 2)
+    return rows
 
 
 def _build_data(mode: str) -> dict:
@@ -346,6 +366,12 @@ def _build_data(mode: str) -> dict:
             t["unreal_pnl"] = None
             t["price_age"] = None
 
+    # Mark-to-market summary from the per-row figures above. Trades with no
+    # recent price are carried at cost (unrealized 0) rather than excluded.
+    priced = [t for t in trades if t.get("unreal_pnl") is not None]
+    pnl["unrealized_pnl"] = round(sum(t["unreal_pnl"] for t in priced), 2)
+    pnl["unpriced_open"] = len(trades) - len(priced)
+
     all_biases = db.get_all_biases_batch()
     stations_raw = db.get_all_stations()
     stations = []
@@ -376,7 +402,7 @@ def _build_data(mode: str) -> dict:
         "history": history,
         "stations": stations,
         "ops": get_ops_snapshot(),
-        "pnl_history": db.get_daily_pnl(),
+        "pnl_history": _pnl_history_with_realized(),
     }
 
 
@@ -417,7 +443,7 @@ def api_data():
 def pnl_history():
     try:
         db.set_mode(request.args.get("mode", "paper"))
-        return jsonify(db.get_daily_pnl())
+        return jsonify(_pnl_history_with_realized())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
