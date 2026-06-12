@@ -11,14 +11,19 @@ Resolution strategy (two independent steps):
     Fetch the real temperature from weather sources regardless of Step 1.
     This value is stored in actual_high_c and feeds back into model bias
     correction — it does NOT affect win/loss when Step 1 succeeds.
-    Priority: Wunderground → ASOS → ERA5 archive.
+    Priority: Wunderground (Polymarket's source) → ASOS → ERA5 archive.
 
-A bucket wins if the actual_high falls in [bucket_lo, bucket_hi) — inclusive lower, exclusive upper.
+When Polymarket itself can't be queried (paper-mode, market dropped from index),
+_weather_fallback_outcome scores the bucket directly from the WU high, matching
+Polymarket's bucket semantics: the INTEGER print in the market's NATIVE unit, with
+membership CLOSED-CLOSED — YES wins iff bucket_lo <= round(high_native) <= bucket_hi.
+(Validated against 18/19 resolved PM settlements, 2026-06; the prior continuous-°C
+exclusive-upper comparison mis-scored upper-edge prints like 65°F in a 64-65°F market.)
 """
 import logging
 import requests as _req
 from datetime import date, timedelta
-from data.wunderground import get_historical_high, WundergroundError
+from data.wunderground import get_historical_high, get_historical_high_native, WundergroundError
 from data.noaa import fetch_asos_daily_max
 from data.openmeteo import fetch_historical_actuals
 from config_active import CITIES
@@ -79,27 +84,46 @@ def _query_polymarket_outcome(clob_token_yes: str, market_id: str = "") -> str |
     return None
 
 
+def _yes_won_native(high_native: float, bucket_lo, bucket_hi) -> bool:
+    """Polymarket bucket membership on the INTEGER print in the market's NATIVE unit.
+
+    PM scores the integer high WU shows and asks e.g. "be 26°C" (single int) or
+    "between 74-75°F" (a 2-degree inclusive range). Validated against 18/19 resolved
+    PM settlements (2026-06): membership is CLOSED-CLOSED on the rounded native print:
+        YES wins iff  bucket_lo <= round(high_native) <= bucket_hi
+    Open / unbounded edges (None) extend to ±inf. The old continuous-°C exclusive-upper
+    comparison mis-scored upper-edge prints (e.g. 65°F in a 64-65°F market) — see
+    data/wunderground.py docstring.
+    """
+    import math
+    w = round(high_native)
+    lo = bucket_lo if bucket_lo is not None else -math.inf
+    hi = bucket_hi if bucket_hi is not None else math.inf
+    return lo <= w <= hi
+
+
 def _weather_fallback_outcome(icao: str, target_date: str, city: str,
                               bucket_lo, bucket_hi, bucket_unit: str) -> str | None:
     """
     Paper-mode fallback: determine YES/NO from actual temperature when Gamma
-    has dropped the market from its index. Mirrors Polymarket's own bucket math.
+    has dropped the market from its index. Mirrors Polymarket's own bucket math
+    exactly (integer print in the market's native unit, closed-closed interval).
     Returns 'yes' | 'no' | None (if temp fetch fails).
     """
-    import math
-    from signals.edge_calculator import bucket_bounds_to_celsius
+    from utils import c_to_f
+    native_unit = "F" if str(bucket_unit).upper().startswith("F") else "C"
     try:
-        actual_c, source = get_actual_high_c(icao, target_date, city)
-        lo_c, hi_c = bucket_bounds_to_celsius(bucket_lo, bucket_hi, bucket_unit)
-        lo = lo_c if lo_c is not None else -math.inf
-        hi = hi_c if hi_c is not None else math.inf
-        yes_won = lo <= actual_c < hi
+        # Fetch the actual high in the market's NATIVE unit so the integer print
+        # matches what Polymarket scores. get_actual_high_c also stores the °C value
+        # for bias correction; we re-derive the native print from its source.
+        high_native, src = get_actual_high_native(icao, target_date, city, native_unit)
+        yes_won = _yes_won_native(high_native, bucket_lo, bucket_hi)
         logger.info(
-            "Weather fallback %s %s: actual=%.1f°C (src=%s) bucket=[%s,%s]°C → YES_won=%s",
-            city, target_date, actual_c, source,
-            f"{lo:.1f}" if lo != -math.inf else "-inf",
-            f"{hi:.1f}" if hi != math.inf else "+inf",
-            yes_won,
+            "Weather fallback %s %s: actual=%s°%s (src=%s) bucket=[%s,%s]%s → YES_won=%s",
+            city, target_date, round(high_native), native_unit, src,
+            bucket_lo if bucket_lo is not None else "-inf",
+            bucket_hi if bucket_hi is not None else "+inf",
+            bucket_unit, yes_won,
         )
         return "yes" if yes_won else "no"
     except Exception as e:
@@ -263,6 +287,58 @@ def get_actual_high_c(icao: str, target_date: str, city_name: str) -> tuple[floa
     raise RuntimeError(
         f"All resolution sources failed for {icao} {target_date}. "
         f"Cannot resolve trade. Skipping."
+    )
+
+
+def get_actual_high_native(icao: str, target_date: str, city_name: str,
+                           native_unit: str) -> tuple[float, str]:
+    """
+    Get the actual daily high in the market's NATIVE unit ('F' or 'C') so the
+    integer print matches what Polymarket scores.
+
+    Source priority mirrors get_actual_high_c (WU first for most cities, ASOS first
+    for Tel Aviv, ERA5 last). WU returns the native integer print directly; ASOS/ERA5
+    return °C, which we convert to the native unit (rounding happens at comparison).
+    Raises RuntimeError if all sources fail.
+    """
+    from utils import c_to_f
+    cfg = CITIES.get(city_name, {})
+    want_f = str(native_unit).upper().startswith("F")
+
+    def _wu_native():
+        return get_historical_high_native(icao, target_date, "F" if want_f else "C"), "wunderground"
+
+    def _asos_native():
+        asos = cfg.get("asos_station", icao)
+        daily_max = fetch_asos_daily_max(asos, target_date, target_date)
+        if target_date in daily_max:
+            c = daily_max[target_date]
+            return (c_to_f(c) if want_f else c), "asos"
+        raise WundergroundError("asos no data")
+
+    def _era5_native():
+        tz = cfg.get("timezone", "UTC")
+        actuals = fetch_historical_actuals(cfg["lat"], cfg["lon"], target_date, target_date, tz)
+        if target_date in actuals:
+            c = actuals[target_date]
+            return (c_to_f(c) if want_f else c), "openmeteo_archive"
+        raise WundergroundError("era5 no data")
+
+    order = ([_asos_native, _wu_native, _era5_native]
+             if city_name in _ASOS_PRIMARY_CITIES
+             else [_wu_native, _asos_native, _era5_native])
+
+    for fn in order:
+        try:
+            val, src = fn()
+            logger.info("Resolution(native) %s %s: %.2f°%s (%s)",
+                        icao, target_date, val, "F" if want_f else "C", src)
+            return val, src
+        except Exception as e:
+            logger.warning("native source failed for %s %s: %s", icao, target_date, e)
+
+    raise RuntimeError(
+        f"All native resolution sources failed for {icao} {target_date}."
     )
 
 

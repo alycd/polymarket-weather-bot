@@ -1,0 +1,18 @@
+[
+  {
+    "trade_id": "fe5b4bee-66a7-4ea0-b566-895f342bcb07",
+    "city": "Denver",
+    "date": "2026-05-28",
+    "bucket": "[74.0,75.0]F",
+    "dir": "NO",
+    "stored_actual_c": 24.44,
+    "wu_native": 75,
+    "wu_unit": "F",
+    "old": "won",
+    "new_int": "lost",
+    "new_cont": "won",
+    "old_pnl": 6.428571428571431,
+    "new_pnl": -15.0,
+    "delta": -21.42857142857143
+  }
+]

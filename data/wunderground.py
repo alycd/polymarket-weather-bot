@@ -1,13 +1,31 @@
 """
-Wunderground data fetcher — last-resort fallback for temperature resolution.
+Wunderground data fetcher — PRIMARY source of truth for temperature resolution.
 
-Resolution source priority (position_manager.py):
-  1. Iowa State ASOS — official airport obs (primary)
-  2. Open-Meteo Archive — ERA5 reanalysis (reliable fallback)
-  3. Wunderground — this module (last resort; may differ from official records)
+Polymarket temperature markets resolve from the Weather Underground daily-history
+page for the market's airport station (wunderground.com/history/daily/<ICAO>/...).
+That page is now JS-rendered and loads its observations client-side from The Weather
+Company backend (api.weather.com) — the same data Polymarket reads. We therefore go
+straight to that backend (see get_historical_high_native / get_historical_high).
+
+Resolution source priority (position_manager.py.get_actual_high_c):
+  1. Wunderground / api.weather.com — Polymarket's own resolution source (PRIMARY)
+  2. Iowa State ASOS — official airport obs (fallback)
+  3. Open-Meteo Archive — ERA5 reanalysis (last resort)
 
 WU is also used for live intraday obs in the nowcaster (advisory only).
+
+Bucket / rounding semantics (validated against 19 resolved PM settlements, 2026-06):
+  Polymarket scores the INTEGER print WU shows for the station's local calendar day.
+  Market questions read "be 26°C" (single integer) or "between 74-75°F" (a 2-degree
+  inclusive range). Membership is on the integer print in the market's NATIVE unit:
+      YES wins iff  bucket_lo <= round(WU_high_native) <= bucket_hi   (closed-closed)
+  Converting the integer print to a continuous °C value and using an exclusive upper
+  bound (the old position_manager behaviour) mis-scores upper-edge prints — e.g.
+  WU=65°F in a 64-65°F market: f_to_c(65)=18.33 == upper edge, 18.33 < 18.33 is False,
+  so the old code wrongly excluded it while Polymarket counts it as YES. Resolve in
+  native integer units to match PM exactly.
 """
+import os
 import re
 import json
 import logging
@@ -16,6 +34,13 @@ import requests
 from datetime import date, datetime
 
 logger = logging.getLogger(__name__)
+
+# ── api.weather.com backend (the data WU's history page actually displays) ──────
+# Public site key embedded in the WU history page HTML. Rotates occasionally; can be
+# overridden via the WU_API_KEY env var. _refresh_api_key() re-scrapes it on a 401.
+_WU_API_KEY = os.environ.get("WU_API_KEY", "e1f10a1e78da46f5b10a1e78da96f525")
+_WX_HOST = "https://api.weather.com"
+_country_cache: dict[str, str | None] = {}
 
 _HEADERS = {
     "User-Agent": (
@@ -33,6 +58,129 @@ TIMEOUT = 20
 
 class WundergroundError(Exception):
     pass
+
+
+# ── api.weather.com path (primary) ──────────────────────────────────────────────
+
+def _refresh_api_key() -> str | None:
+    """Re-scrape the current api.weather.com site key from a WU history page.
+
+    The embedded key rotates periodically; on a 401 we refresh it once. Returns the
+    new key (also updates the module global) or None if it can't be found.
+    """
+    global _WU_API_KEY
+    try:
+        url = "https://www.wunderground.com/history/daily/KSFO/date/2024-01-01"
+        html = requests.get(url, headers=_HEADERS, timeout=TIMEOUT).text
+        m = re.search(r"apiKey=([a-f0-9]{32})", html) or re.search(r"['\"]([a-f0-9]{32})['\"]", html)
+        if m:
+            _WU_API_KEY = m.group(1)
+            logger.info("Refreshed WU api.weather.com key")
+            return _WU_API_KEY
+    except Exception as e:
+        logger.warning("WU api key refresh failed: %s", e)
+    return None
+
+
+def _country_code(icao: str) -> str | None:
+    """Resolve the ISO country code WU uses for the {ICAO}:9:{CC} location key."""
+    if icao in _country_cache:
+        return _country_cache[icao]
+    try:
+        r = requests.get(f"{_WX_HOST}/v3/location/point",
+                         params={"apiKey": _WU_API_KEY, "language": "en-US",
+                                 "icaoCode": icao, "format": "json"},
+                         headers=_HEADERS, timeout=TIMEOUT)
+        if r.status_code == 401 and _refresh_api_key():
+            r = requests.get(f"{_WX_HOST}/v3/location/point",
+                             params={"apiKey": _WU_API_KEY, "language": "en-US",
+                                     "icaoCode": icao, "format": "json"},
+                             headers=_HEADERS, timeout=TIMEOUT)
+        if r.ok:
+            cc = r.json().get("location", {}).get("countryCode")
+            _country_cache[icao] = cc
+            return cc
+    except Exception as e:
+        logger.warning("WU country-code lookup failed for %s: %s", icao, e)
+    _country_cache[icao] = None
+    return None
+
+
+def get_historical_high_native(icao: str, target_date: str, unit: str) -> float:
+    """
+    Fetch the official WU daily HIGH for the station's local calendar day, returned
+    as an INTEGER print in the market's NATIVE unit ('F' → °F, 'C'/'metric' → °C).
+
+    This is the value Polymarket scores from. It is the max over the day's hourly
+    observations (WU's history-page 'High'), matched on the station-local day window.
+
+    Raises WundergroundError on failure (so callers can fall back to ASOS/ERA5).
+    """
+    cc = _country_code(icao)
+    if not cc:
+        raise WundergroundError(f"WU: no country code for {icao}")
+    api_unit = "e" if str(unit).upper().startswith("F") else "m"  # e=°F, m=°C
+    loc = f"{icao}:9:{cc}"
+    ymd = target_date.replace("-", "")
+    url = f"{_WX_HOST}/v1/location/{loc}/observations/historical.json"
+    params = {"apiKey": _WU_API_KEY, "units": api_unit, "startDate": ymd, "endDate": ymd}
+    try:
+        r = requests.get(url, params=params, headers=_HEADERS, timeout=TIMEOUT)
+        if r.status_code == 401 and _refresh_api_key():
+            params["apiKey"] = _WU_API_KEY
+            r = requests.get(url, params=params, headers=_HEADERS, timeout=TIMEOUT)
+        if not r.ok:
+            raise WundergroundError(f"WU api.weather.com HTTP {r.status_code} for {icao} {target_date}")
+        obs = r.json().get("observations", [])
+        temps = [o.get("temp") for o in obs if o.get("temp") is not None]
+        if not temps:
+            raise WundergroundError(f"WU api.weather.com no obs for {icao} {target_date}")
+        hi = max(temps)
+        logger.info("WU %s %s: daily high = %s°%s (api.weather.com, %d obs)",
+                    icao, target_date, hi, api_unit.upper(), len(temps))
+        return float(hi)
+    except WundergroundError:
+        raise
+    except Exception as e:
+        raise WundergroundError(f"WU api.weather.com fetch failed for {icao} {target_date}: {e}") from e
+
+
+def get_hourly_forecast_native(icao: str, target_date: str, unit: str) -> list[dict]:
+    """
+    TWC hourly temperature FORECAST for the station's target local date — the same
+    forecast rendered on the WU page (api.weather.com backs both). Used by the
+    dashboard outlook so its projected high matches what a WU reader sees.
+
+    Returns [{"time": "HH:MM", "temp": float}] in the requested native unit,
+    restricted to hours falling on target_date. The feed starts at 'now', so for
+    a same-day target the already-elapsed hours are absent — live observations
+    cover those. Raises WundergroundError on failure (callers fall back to
+    Open-Meteo).
+    """
+    api_unit = "e" if str(unit).upper().startswith("F") else "m"
+    url = f"{_WX_HOST}/v3/wx/forecast/hourly/2day"
+    params = {"apiKey": _WU_API_KEY, "units": api_unit, "icaoCode": icao,
+              "language": "en-US", "format": "json"}
+    try:
+        r = requests.get(url, params=params, headers=_HEADERS, timeout=TIMEOUT)
+        if r.status_code == 401 and _refresh_api_key():
+            params["apiKey"] = _WU_API_KEY
+            r = requests.get(url, params=params, headers=_HEADERS, timeout=TIMEOUT)
+        if not r.ok:
+            raise WundergroundError(f"TWC hourly forecast HTTP {r.status_code} for {icao}")
+        j = r.json()
+        times = j.get("validTimeLocal") or []
+        temps = j.get("temperature") or []
+        out = [{"time": t[11:16], "temp": float(v)}
+               for t, v in zip(times, temps)
+               if v is not None and t[:10] == target_date]
+        if not out:
+            raise WundergroundError(f"TWC hourly forecast: no hours on {target_date} for {icao}")
+        return out
+    except WundergroundError:
+        raise
+    except Exception as e:
+        raise WundergroundError(f"TWC hourly forecast failed for {icao}: {e}") from e
 
 
 _RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -165,7 +313,18 @@ def get_historical_high(icao: str, target_date: str) -> float:
     Fetch the daily recorded high temperature (°C) from Wunderground.
     target_date: 'YYYY-MM-DD'
     Raises WundergroundError if unavailable or parsing fails.
+
+    Uses the api.weather.com backend (the data WU's history page renders) first;
+    falls back to legacy HTML scraping only if the backend path fails. Returns °C
+    (the metric integer print); for native-unit / PM-exact bucket math use
+    get_historical_high_native().
     """
+    try:
+        return get_historical_high_native(icao, target_date, "C")
+    except WundergroundError as e:
+        logger.warning("WU api.weather.com path failed for %s %s (%s) — trying legacy HTML",
+                       icao, target_date, e)
+
     html = _fetch_wu_page(icao, target_date)
     blob = _extract_json_blob(html)
 
