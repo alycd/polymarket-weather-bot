@@ -22,8 +22,10 @@ import db
 logger = logging.getLogger(__name__)
 
 
-def compute_calibration() -> dict:
+def compute_calibration(since: str | None = None) -> dict:
     resolved = db.get_resolved_trades()
+    if since:
+        resolved = [t for t in resolved if (t.get("resolved_at") or "") >= since]
     if not resolved:
         return {
             "n": 0,

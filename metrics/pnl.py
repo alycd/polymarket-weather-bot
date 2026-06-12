@@ -2,8 +2,12 @@
 import db
 
 
-def compute_pnl_summary() -> dict:
+def compute_pnl_summary(since: str | None = None) -> dict:
+    """since: ISO timestamp — only count trades resolved at/after it.
+    Bankroll/deployed/equity are current state and ignore the window."""
     resolved   = db.get_realized_trades()   # won/lost/stop_loss — all realized P&L
+    if since:
+        resolved = [t for t in resolved if (t.get("resolved_at") or "") >= since]
     open_trades = db.get_open_trades()
     bankroll   = db.get_bankroll()
 

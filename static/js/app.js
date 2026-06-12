@@ -110,7 +110,8 @@ function renderHero(d) {
   const modeText = (d.mode || _mode).toUpperCase();
   const src = document.getElementById('data-mode-text');
   if (src) {
-    src.textContent = `Data source: ${modeText} (${d.db_file || 'db'}) · open=${d.open_count ?? (d.positions||[]).length} · resolved=${d.history_count ?? (d.history||[]).length}`;
+    const rangeText = d.range_days ? ` · range: last ${d.range_days === 1 ? '24h' : d.range_days + 'd'}` : '';
+    src.textContent = `Data source: ${modeText} (${d.db_file || 'db'}) · open=${d.open_count ?? (d.positions||[]).length} · resolved=${d.history_count ?? (d.history||[]).length}${rangeText}`;
   }
 }
 
@@ -592,6 +593,14 @@ function closeModal() {
 function maybeClose(e) { if(e.target===document.getElementById('overlay')) closeModal(); }
 document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
 
+// ── time-range filter ─────────────────────────────────────────────────────────
+var _range = localStorage.getItem('dashboard_range') || '';
+function setRange(v) {
+  _range = v || '';
+  localStorage.setItem('dashboard_range', _range);
+  load(true);
+}
+
 // ── mode toggle ───────────────────────────────────────────────────────────────
 var _mode = localStorage.getItem('dashboard_mode') || 'paper';
 function setMode(m) {
@@ -641,7 +650,7 @@ function load(force) {
   _loading = true;
   const icon = document.getElementById('refresh-icon');
   icon.classList.add('spin');
-  const url = '/api/data?mode=' + _mode + (force ? '&force=1' : '');
+  const url = '/api/data?mode=' + _mode + (_range ? '&days=' + _range : '') + (force ? '&force=1' : '');
   fetch(url)
     .then(r => r.json())
     .then(d => {
@@ -782,6 +791,8 @@ function _reconnectPersistentJobs() {
   if (q === 'paper' || q === 'live') {
     _mode = q;
   }
+  const sel = document.getElementById('range-select');
+  if (sel) sel.value = _range;
   setMode(_mode);
   _reconnectPersistentJobs();
 })();

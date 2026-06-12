@@ -100,6 +100,10 @@ body.live-mode .live-dot { background: var(--accent); animation: pulse-live 2s i
 .mtab.active { background: rgba(255,255,255,0.1); color: var(--text-main); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
 .mtab.live.active { background: var(--accent); color: #000; }
 
+.range-select { height: 36px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-muted); font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; cursor: pointer; outline: none; transition: 0.2s; -webkit-appearance: none; appearance: none; }
+.range-select:hover { color: var(--text-main); border-color: rgba(255,255,255,0.2); }
+.range-select option { background: #111; color: var(--text-main); }
+
 .ts-wrap { display: flex; flex-direction: column; align-items: flex-end; }
 .ts      { font-size: 13px; color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .ts-age  { font-size: 11px; color: var(--text-dim); }

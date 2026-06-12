@@ -4,8 +4,11 @@ from collections import defaultdict
 import db
 
 
-def compute_sharpe() -> float | None:
+def compute_sharpe(since: str | None = None) -> float | None:
     resolved = [t for t in db.get_realized_trades() if t["pnl"] is not None]
+    if since:
+        resolved = [t for t in resolved
+                    if (t.get("resolved_at") or t["entry_time"]) >= since]
     if len(resolved) < 4:
         return None
 

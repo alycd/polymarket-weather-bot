@@ -81,7 +81,9 @@ def _run_job(job_id: str, cmd_flag: str, mode: str = "paper", timeout: int = 600
             "status": "done" if result.returncode == 0 else "error",
             "output": output[-4000:],
         }
-        _api_cache.pop(mode, None)
+        # Cache keys are "<mode>:<days|all>" — drop every window for this mode
+        for k in [k for k in _api_cache if k.split(":")[0] == mode]:
+            _api_cache.pop(k, None)
     except subprocess.TimeoutExpired:
         mins = timeout // 60
         _jobs[job_id] = {"status": "error", "output": f"Timed out after {mins} minutes."}
@@ -189,9 +191,12 @@ def _enrich_trades(trades, db_path: str):
     return enriched
 
 
-def _build_polymarket_live_dashboard(db_path: str) -> dict:
+def _build_polymarket_live_dashboard(db_path: str, days: int | None = None) -> dict:
     """
     Entire live view from Polymarket public Data API + CLOB cash (same as UI).
+
+    days: only count positions CLOSED within the last N days toward realized
+    stats/history. Cash and open positions are current state — unfiltered.
     """
     from broker.live_broker import (
         get_clob_balance,
@@ -208,6 +213,14 @@ def _build_polymarket_live_dashboard(db_path: str) -> dict:
     cash = float(get_clob_balance() or 0.0)
     raw_open = get_clob_positions()
     raw_closed = get_polymarket_closed_positions(limit=500)
+
+    if days:
+        cutoff_epoch = time.time() - days * 86400
+        def _closed_at(p):
+            return int(p.get("timestamp") or 0) or int(p.get("closedAt") or 0)
+        # Rows the API doesn't date are dropped under a filter — we can't
+        # claim they're in the window.
+        raw_closed = [p for p in raw_closed if _closed_at(p) >= cutoff_epoch]
 
     pos_value_api = get_polymarket_positions_value_usd()
     positions_sum = sum(float(p.get("currentValue") or 0) for p in raw_open)
@@ -328,6 +341,7 @@ def _build_polymarket_live_dashboard(db_path: str) -> dict:
         "db_file": os.path.basename(db_path),
         "live_pm_ui": True,
         "data_source": "polymarket",
+        "range_days": days,
         "open_count": len(rows_open),
         "history_count": len(rows_closed),
         "pnl": pnl,
@@ -337,20 +351,26 @@ def _build_polymarket_live_dashboard(db_path: str) -> dict:
         "history": rows_closed,
         "stations": stations,
         "ops": get_ops_snapshot(),
-        "pnl_history": _pnl_history_with_realized(),
+        "pnl_history": _pnl_history_with_realized(_since_iso(days)),
     }
 
 
-def _pnl_history_with_realized() -> list[dict]:
+def _pnl_history_with_realized(since: str | None = None) -> list[dict]:
     """daily_pnl rows annotated with cumulative realized P&L from resolved trades.
 
     The chart previously plotted ending_bankroll minus the first row's
     starting_bankroll as "Cum PnL" — but bankroll is cash, which swings with
     stake deployment, and the first snapshot was taken mid-deployment, so the
     line overstated profit. cum_realized is the true profit curve.
+
+    since: full ISO timestamp — drop day-rows before its date and restart the
+    cumulative sum at the window start (timestamp-exact, so sub-day windows
+    agree with the timestamp-filtered summary numbers).
     """
     rows = db.get_daily_pnl()
-    daily = db.get_daily_realized_pnl()
+    daily = db.get_daily_realized_pnl(since=since)
+    if since:
+        rows = [r for r in rows if r["pnl_date"] >= since[:10]]
     dates = sorted(daily)
     cum, i = 0.0, 0
     for row in rows:
@@ -361,19 +381,30 @@ def _pnl_history_with_realized() -> list[dict]:
     return rows
 
 
-def _build_data(mode: str) -> dict:
+def _since_iso(days: int | None) -> str | None:
+    """UTC ISO cutoff for an N-day window, or None for no filter."""
+    if not days:
+        return None
+    from datetime import timedelta
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _build_data(mode: str, days: int | None = None) -> dict:
     db.set_mode(mode)
     current_path = db.DB_PATH
 
     if mode == "live":
-        return _build_polymarket_live_dashboard(current_path)
+        return _build_polymarket_live_dashboard(current_path, days=days)
 
-    pnl = compute_pnl_summary()
-    cal = compute_calibration()
-    sharpe = compute_sharpe()
+    since = _since_iso(days)
+    pnl = compute_pnl_summary(since=since)
+    cal = compute_calibration(since=since)
+    sharpe = compute_sharpe(since=since)
     open_trades_raw = db.get_open_trades()
     all_trades = db.get_all_trades()
     history_raw = [t for t in all_trades if t["status"] in ("won", "lost", "stop_loss")]
+    if since:
+        history_raw = [t for t in history_raw if (t.get("resolved_at") or "") >= since]
     trades = _enrich_trades(open_trades_raw, current_path)
     history = _enrich_trades(history_raw, current_path)
 
@@ -419,6 +450,7 @@ def _build_data(mode: str) -> dict:
         "mode": mode,
         "db_file": os.path.basename(current_path),
         "live_pm_ui": False,
+        "range_days": days,
         "open_count": len(open_trades_raw),
         "history_count": len(history_raw),
         "pnl": pnl,
@@ -428,35 +460,40 @@ def _build_data(mode: str) -> dict:
         "history": history,
         "stations": stations,
         "ops": get_ops_snapshot(),
-        "pnl_history": _pnl_history_with_realized(),
+        "pnl_history": _pnl_history_with_realized(since),
     }
 
 
 @app.route("/api/data")
 def api_data():
     mode = request.args.get("mode", "paper")
+    try:
+        days = int(request.args.get("days", "") or 0) or None
+    except ValueError:
+        days = None
+    cache_key = f"{mode}:{days or 'all'}"
     now = time.time()
     force = request.args.get("force", "") == "1"
 
     if not force:
-        cached = _api_cache.get(mode)
+        cached = _api_cache.get(cache_key)
         if cached and (now - cached["ts"]) < CACHE_TTL:
             return jsonify(cached["data"])
 
     with _api_lock:
         if not force:
-            cached = _api_cache.get(mode)
+            cached = _api_cache.get(cache_key)
             if cached and (now - cached["ts"]) < CACHE_TTL:
                 return jsonify(cached["data"])
 
         try:
-            data = _build_data(mode)
-            _api_cache[mode] = {"ts": now, "data": data}
+            data = _build_data(mode, days=days)
+            _api_cache[cache_key] = {"ts": now, "data": data}
             return jsonify(data)
         except Exception as e:
             tb = traceback.format_exc()
-            logger.error("api_data(%s) error: %s\n%s", mode, e, tb)
-            stale = _api_cache.get(mode)
+            logger.error("api_data(%s) error: %s\n%s", cache_key, e, tb)
+            stale = _api_cache.get(cache_key)
             if stale:
                 d = dict(stale["data"])
                 d["stale"] = True
@@ -469,7 +506,11 @@ def api_data():
 def pnl_history():
     try:
         db.set_mode(request.args.get("mode", "paper"))
-        return jsonify(_pnl_history_with_realized())
+        try:
+            days = int(request.args.get("days", "") or 0) or None
+        except ValueError:
+            days = None
+        return jsonify(_pnl_history_with_realized(_since_iso(days)))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

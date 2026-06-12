@@ -1043,11 +1043,14 @@ def get_daily_pnl() -> list[dict]:
         ).fetchall()]
 
 
-def get_daily_realized_pnl() -> dict[str, float]:
+def get_daily_realized_pnl(since: str | None = None) -> dict[str, float]:
     """Realized P&L from resolved trades, summed by resolution date.
 
     This is the true profit series — unlike daily_pnl's bankroll deltas, it
     is unaffected by stake deployment cash flows.
+
+    since: full ISO timestamp cutoff (not just a date) so sub-day windows
+    (e.g. last 24h) agree with timestamp-filtered summaries.
     """
     with _conn() as conn:
         return {
@@ -1056,8 +1059,9 @@ def get_daily_realized_pnl() -> dict[str, float]:
                 SELECT substr(resolved_at, 1, 10) AS d, SUM(pnl) AS pnl
                 FROM trades
                 WHERE status IN ('won', 'lost', 'stop_loss') AND pnl IS NOT NULL
+                  AND resolved_at >= ?
                 GROUP BY d ORDER BY d
-            """)
+            """, (since or "",))
         }
 
 
