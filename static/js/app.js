@@ -237,8 +237,11 @@ function renderModalOutlook(trade) {
         ? ` · ASOS ${d.obs.max}°${rate} <span class="md">${asosNote}</span>` : '';
       obs = '<br>' + wu + asos;
       if (d.obs.disagree) {
+        // ASOS above WU is ambiguous: usually ingest lag (WU catches up within
+        // the hour), but sometimes a between-hours spike WU never prints —
+        // audit found ~15% of settled days end with the gap unreconciled.
         obs += asosAhead
-          ? ' <span class="y fw6">⚠ ASOS above WU — official print likely to rise</span>'
+          ? ' <span class="y fw6">⚠ ASOS above WU — print may rise (or the spike may never print)</span>'
           : ' <span class="md">⚠ ASOS behind WU — trust the official number</span>';
       }
     }
