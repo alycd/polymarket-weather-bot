@@ -502,6 +502,159 @@ def api_data():
             return jsonify({"error": str(e), "traceback": tb}), 500
 
 
+# ── Position outlook ───────────────────────────────────────────────────────────
+# Automates the manual loop: open position → check hourly forecast → does the
+# day's max hit the bucket, and which hour gets closest?
+_outlook_cache: dict[str, dict] = {}
+_OUTLOOK_TTL = 900  # hourly forecasts update slowly; 15 min is plenty
+_obs_cache: dict[str, dict] = {}
+_OBS_TTL = 300      # live obs move faster, but ASOS rate-limits aggressive polling
+
+
+def _c_to_unit(c: float, unit: str) -> float:
+    return c * 9 / 5 + 32 if unit == "F" else c
+
+
+def _bucket_distance(temp: float, lo, hi) -> float:
+    """Signed distance from temp to the bucket [lo, hi]. 0 = inside.
+    Negative = below lo (need warmer), positive = above hi (overshot)."""
+    if lo is not None and temp < lo:
+        return temp - lo
+    if hi is not None and temp > hi:
+        return temp - hi
+    return 0.0
+
+
+@app.route("/api/outlook/<trade_id>")
+def position_outlook(trade_id):
+    try:
+        db.set_mode(request.args.get("mode", "paper"))
+        trade = db.get_trade(trade_id)
+        if not trade:
+            return jsonify({"error": "trade not found"}), 404
+        # Temperature markets are typed 'daily' (legacy) or 'temperature';
+        # only TSA/crypto have no hourly-temp outlook.
+        if (trade.get("market_type") or "") in ("tsa", "crypto"):
+            return jsonify({"error": "outlook only for temperature markets"}), 400
+
+        from config_active import CITIES
+        cfg = CITIES.get(trade["city"])
+        if not cfg:
+            return jsonify({"error": f"no city config for {trade['city']}"}), 400
+
+        target_date = str(trade["target_date"])
+        unit = trade.get("bucket_unit") or ("F" if cfg.get("uses_fahrenheit") else "C")
+        cache_key = f"{trade['city']}:{target_date}:{unit}"
+        now = time.time()
+        cached = _outlook_cache.get(cache_key)
+        if cached and now - cached["ts"] < _OUTLOOK_TTL:
+            body = dict(cached["data"])
+        else:
+            # Prefer the WU/TWC forecast — it's what readers of the resolution
+            # page see, so the projected high matches theirs. Fall back to
+            # Open-Meteo when TWC is unavailable (or for far-out dates).
+            hourly, fc_source = None, None
+            try:
+                from data.wunderground import get_hourly_forecast_native
+                hourly = get_hourly_forecast_native(cfg["icao"], target_date, unit)
+                hourly = [{"time": h["time"], "temp": round(h["temp"], 1)} for h in hourly]
+                fc_source = "WU"
+            except Exception as e:
+                logger.info("TWC forecast unavailable for %s (%s) — using Open-Meteo",
+                            trade["city"], e)
+            if not hourly:
+                from data.openmeteo import fetch_hourly_temps
+                hourly_raw = fetch_hourly_temps(cfg["lat"], cfg["lon"], target_date,
+                                                cfg["timezone"])
+                if not hourly_raw:
+                    return jsonify({"error": "no hourly forecast available"}), 502
+                hourly = [{"time": h["time"][11:16], "temp": round(_c_to_unit(h["temp_c"], unit), 1)}
+                          for h in hourly_raw]
+                fc_source = "Open-Meteo"
+            peak = max(hourly, key=lambda h: h["temp"])
+            body = {"hourly": hourly, "peak": peak, "unit": unit, "fc_source": fc_source}
+            _outlook_cache[cache_key] = {"ts": now, "data": body}
+
+        lo, hi = trade.get("bucket_lo"), trade.get("bucket_hi")
+        peak = body["peak"]
+        hourly = body["hourly"]
+
+        # Live observed running max (only meaningful for today, local time).
+        # Cached separately: obs move faster than forecasts, but ASOS 429s
+        # aggressive polling.
+        obs = None
+        try:
+            from zoneinfo import ZoneInfo
+            today_local = datetime.now(ZoneInfo(cfg["timezone"])).date().isoformat()
+            if target_date == today_local:
+                oc = _obs_cache.get(trade["city"])
+                if oc and now - oc["ts"] < _OBS_TTL:
+                    obs_c = oc["data"]
+                else:
+                    from signals.nowcaster import get_running_max_c
+                    from data.wunderground import get_running_max_wu
+                    max_c, rate = get_running_max_c(trade["city"])
+                    # WU is what Polymarket resolves from — fetch its own
+                    # number separately rather than trusting the METAR blend.
+                    wu_c = get_running_max_wu(cfg["icao"]) if cfg.get("icao") else None
+                    obs_c = ({"max_c": max_c, "rate": rate, "wu_c": wu_c}
+                             if (max_c is not None or wu_c is not None) else None)
+                    _obs_cache[trade["city"]] = {"ts": now, "data": obs_c}
+                if obs_c:
+                    obs = {}
+                    if obs_c.get("max_c") is not None:
+                        obs["max"] = round(_c_to_unit(obs_c["max_c"], unit), 1)
+                        obs["rate_c_per_h"] = (round(obs_c["rate"], 2)
+                                               if obs_c.get("rate") is not None else None)
+                    if obs_c.get("wu_c") is not None:
+                        obs["wu_max"] = round(_c_to_unit(obs_c["wu_c"], unit), 1)
+                    if obs.get("max") is not None and obs.get("wu_max") is not None:
+                        obs["disagree"] = abs(obs["max"] - obs["wu_max"]) >= 1.0
+        except Exception as e:
+            logger.debug("outlook obs fetch failed for %s: %s", trade["city"], e)
+
+        # Verdict on the best estimate of the day's max: forecast peak, or an
+        # observed running max if reality has already outrun the forecast.
+        # WU's number counts double here — it's the resolution source.
+        day_max = peak["temp"]
+        max_source = "forecast"
+        if obs and obs.get("max") is not None and obs["max"] > day_max:
+            day_max = obs["max"]
+            max_source = "observed"
+        if obs and obs.get("wu_max") is not None and obs["wu_max"] > day_max:
+            day_max = obs["wu_max"]
+            max_source = "observed_wu"
+        peak_dist = _bucket_distance(day_max, lo, hi)
+        verdict = "HIT" if peak_dist == 0 else ("MISS_BELOW" if peak_dist < 0 else "MISS_ABOVE")
+        direction = trade.get("direction", "NO")
+        favorable = (verdict == "HIT") == (direction == "YES")
+
+        # Closest approach: the hour whose temp is nearest the bucket — the
+        # time of day worth monitoring. On a HIT, this is the first hour inside.
+        closest = min(hourly, key=lambda h: abs(_bucket_distance(h["temp"], lo, hi)))
+
+        return jsonify({
+            "city": trade["city"],
+            "target_date": target_date,
+            "direction": direction,
+            "bucket": {"lo": lo, "hi": hi, "unit": body["unit"]},
+            "peak": peak,
+            "fc_source": body.get("fc_source", "Open-Meteo"),
+            "day_max": round(day_max, 1),
+            "max_source": max_source,
+            "verdict": verdict,
+            "favorable": favorable,
+            "peak_margin": round(peak_dist, 1),
+            "closest": {**closest,
+                        "dist": round(_bucket_distance(closest["temp"], lo, hi), 1)},
+            "obs": obs,
+            "hourly": hourly,
+        })
+    except Exception as e:
+        logger.error("outlook(%s) error: %s", trade_id[:8], e)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/pnl-history")
 def pnl_history():
     try:

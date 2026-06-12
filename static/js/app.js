@@ -146,6 +146,98 @@ function renderPills(d) {
   `).join('');
 }
 
+// ── position outlook (hourly forecast vs bucket) ──────────────────────────────
+var _outlooks = new Map();   // trade_id → {ts, data}; backend caches 15m, we 10m
+function fetchOutlook(tradeId) {
+  const c = _outlooks.get(tradeId);
+  if (c && Date.now() - c.ts < 600000) return Promise.resolve(c.data);
+  return fetch('/api/outlook/' + encodeURIComponent(tradeId) + '?mode=' + _mode)
+    .then(r => r.json())
+    .then(d => { if (!d.error) _outlooks.set(tradeId, {ts: Date.now(), data: d}); return d; })
+    .catch(() => ({error: 'fetch failed'}));
+}
+function _hr12(hhmm) {
+  const H = parseInt(hhmm.slice(0, 2), 10);
+  return (H % 12 || 12) + (H < 12 ? 'am' : 'pm');
+}
+function fmtOutlookCell(d) {
+  if (!d || d.error) return '<span class="md">—</span>';
+  const cls = d.favorable ? 'g' : 'r';
+  const isObs = d.max_source && d.max_source.startsWith('observed');
+  const src = d.max_source === 'observed_wu' ? 'WU so far' : (isObs ? 'obs so far' : '@ ' + _hr12(d.peak.time));
+  const m = Math.abs(d.peak_margin);
+  const verdict = d.verdict === 'HIT' ? 'IN bucket'
+    : d.verdict === 'MISS_ABOVE' ? `over by ${m}°`
+    : `under by ${m}°`;
+  const title = `Day-high estimate ${d.day_max}° (${isObs ? 'already observed' : 'forecast peak'}) vs bucket ` +
+    `${d.bucket.lo ?? ''}–${d.bucket.hi ?? ''}° — ${verdict}. ` +
+    `${d.favorable ? 'Good' : 'Bad'} for your ${d.direction}. Click row for hourly detail.`;
+  return `<span class="mono ${cls}" style="font-size:11px" title="${title}">high ${d.day_max}° ${src} → ${verdict}</span>`;
+}
+function _fillOutlooks(pos) {
+  pos.filter(p => !p.pm_row && p.bucket_unit && p.bucket_unit !== 'PM').forEach(p => {
+    fetchOutlook(String(p.trade_id)).then(d => {
+      const html = fmtOutlookCell(d);
+      const el = document.getElementById('ol-' + p.trade_id);
+      if (el) el.innerHTML = html;
+      // Mobile portrait: the Outlook column is hidden, so the same text
+      // renders under the bet badge instead.
+      const elm = document.getElementById('olm-' + p.trade_id);
+      if (elm) elm.innerHTML = html;
+    });
+  });
+}
+function renderModalOutlook(trade) {
+  const box = document.getElementById('m-outlook');
+  if (!box) return;
+  if (trade.pm_row || !trade.bucket_unit || trade.bucket_unit === 'PM' || trade.status && trade.status !== 'open') {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = '';
+  box.innerHTML = '<span class="md">Loading hourly outlook…</span>';
+  fetchOutlook(String(trade.trade_id)).then(d => {
+    if (!d || d.error) { box.innerHTML = '<span class="md">Outlook unavailable: ' + (d && d.error || '?') + '</span>'; return; }
+    const u = d.bucket.unit;
+    const bucketStr = (d.bucket.lo != null ? d.bucket.lo : '−∞') + '–' + (d.bucket.hi != null ? d.bucket.hi : '∞') + '°' + u;
+    const cls = d.favorable ? 'g' : 'r';
+    const basis = d.max_source === 'observed_wu' ? `WU observed max ${d.day_max}°`
+      : d.max_source === 'observed' ? `observed max ${d.day_max}°`
+      : `${d.fc_source || ''} forecast peak ${d.day_max}°`;
+    const verdictTxt = d.verdict === 'HIT'
+      ? `HIT predicted — ${basis} lands in bucket`
+      : `MISS predicted — ${basis} is ${Math.abs(d.peak_margin)}° ${d.verdict === 'MISS_BELOW' ? 'below' : 'above'} bucket`;
+    const watch = `watch ~${_hr12(d.closest.time)} (closest: ${d.closest.temp}°)`;
+    let obs = '';
+    if (d.obs) {
+      // WU is what Polymarket resolves from — its printed max is the official
+      // number, shown first. ASOS is the faster station feed WU converges to.
+      const wu = d.obs.wu_max != null
+        ? `<span class="fw6">Official WU max: ${d.obs.wu_max}°</span> <span class="md">(resolution source)</span>`
+        : `<span class="md">Official WU max: not yet reported</span>`;
+      const rate = d.obs.rate_c_per_h != null
+        ? (d.obs.rate_c_per_h > 0 ? ' ↑' : ' ↓') + Math.abs(d.obs.rate_c_per_h) + '°C/h' : '';
+      const asos = d.obs.max != null
+        ? ` · ASOS ${d.obs.max}°${rate} <span class="md">(leads WU)</span>` : '';
+      obs = '<br>' + wu + asos;
+      if (d.obs.disagree) obs += ' <span class="y fw6">⚠ WU differs from ASOS — official print may move</span>';
+    }
+    const strip = d.hourly
+      .filter(h => { const H = parseInt(h.time.slice(0, 2), 10); return H >= 8 && H <= 21; })
+      .map(h => {
+        const inB = (d.bucket.lo == null || h.temp >= d.bucket.lo) && (d.bucket.hi == null || h.temp <= d.bucket.hi);
+        const isPeak = h.time === d.peak.time;
+        let s = `${_hr12(h.time)} ${Math.round(h.temp)}°`;
+        if (isPeak) s = `<b>${s}</b>`;
+        return `<span class="${inB ? cls : 'md'}">${s}</span>`;
+      }).join('<span class="md"> · </span>');
+    box.innerHTML =
+      `<div class="m-outlook-line">Bucket <span class="mono fw6">${bucketStr}</span> · ` +
+      `<span class="${cls} fw6">${verdictTxt}</span> · ${watch}${obs}</div>` +
+      `<div class="m-outlook-strip mono">${strip}</div>`;
+  });
+}
+
 // ── positions ─────────────────────────────────────────────────────────────────
 function renderPositions(pos) {
   const card = document.getElementById('pos-card');
@@ -181,9 +273,10 @@ function renderPositions(pos) {
     return `<tr class="${p.clob_token_yes?'row-click':''} slide-up" style="animation-delay: ${i*0.03}s" data-id="${p.trade_id}">
       <td class="fw6 wrap-cell">${p.city}</td>
       <td class="mono md hide-xs">${p.target_date}</td>
-      <td>${dir} <span class="mono md hide-xs" style="font-size:11px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span></td>
+      <td>${dir} <span class="mono md hide-xs" style="font-size:11px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span><div class="xs-only"><span class="mono md" style="font-size:10px">${tempStr(p.bucket_lo,p.bucket_hi,p.bucket_unit)}</span><div id="olm-${p.trade_id}"></div></div></td>
       <td class="tr mono hide-xs">${(p.entry_price*100).toFixed(1)}¢</td>
       <td class="tr mono hide-xs">${nowStr}</td>
+      <td class="tr hide-xs" id="ol-${p.trade_id}"><span class="md">…</span></td>
       <td class="tr mono fw6 hide-xs">${p.size_usdc>0?'$'+p.size_usdc.toFixed(2):'<span class="md">—</span>'}</td>
       <td class="tr mono fw6">${maxWinStr}</td>
       <td class="tr mono fw6">${upnlStr}</td>
@@ -195,7 +288,7 @@ function renderPositions(pos) {
   const pnlSumStr = `<span class="pos-pnl-sum mono ${pClass(pnlSum)}">${pnlSum >= 0 ? '+$' : '-$'}${Math.abs(pnlSum).toFixed(2)}</span>`;
   const thead = pm
     ? '<thead><tr><th>Market</th><th class="hide-xs">End</th><th>Side</th><th class="tr hide-xs">Avg</th><th class="tr hide-xs">Mkt%</th><th class="tr">Value</th><th class="tr">PnL</th></tr></thead>'
-    : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th class="tr hide-xs">Entry</th><th class="tr hide-xs">Now</th><th class="tr hide-xs">Size</th><th class="tr">Max Win</th><th class="tr">Unreal PnL</th></tr></thead>';
+    : '<thead><tr><th>City</th><th class="hide-xs">Date</th><th>Bet</th><th class="tr hide-xs">Entry</th><th class="tr hide-xs">Now</th><th class="tr hide-xs">Outlook</th><th class="tr hide-xs">Size</th><th class="tr">Max Win</th><th class="tr">Unreal PnL</th></tr></thead>';
   card.innerHTML = `
     <div class="card-hdr">
       <span class="card-title glow-text">Open Positions <span class="card-badge">${pos.length}</span></span>
@@ -208,6 +301,7 @@ function renderPositions(pos) {
   card.querySelectorAll('tr[data-id]').forEach(row => {
     row.addEventListener('click', () => { const t=_trades.get(row.dataset.id); if(t) openModal(t); });
   });
+  if (!pm) _fillOutlooks(pos);
 }
 
 // ── exposure ──────────────────────────────────────────────────────────────────
@@ -504,6 +598,7 @@ function openModal(trade) {
   } else {
     wuEl.style.display = 'none';
   }
+  renderModalOutlook(trade);
   const cl = document.getElementById('chart-load');
   cl.style.display = 'flex';
   cl.innerHTML = '<div class="spin-neon"></div><span>Decrypting feed...</span>';

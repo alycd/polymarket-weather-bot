@@ -853,6 +853,12 @@ def open_trade_atomic(trade_id, market_id, city, icao, target_date, bucket_lo, b
               clob_token_yes or "", exit_depth_usdc))
 
 
+def get_trade(trade_id: str) -> dict | None:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM trades WHERE trade_id=?", (trade_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def already_in_market(market_id) -> bool:
     with _conn() as conn:
         row = conn.execute(

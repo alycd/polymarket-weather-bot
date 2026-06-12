@@ -271,3 +271,33 @@ def fetch_historical_model_forecast(model_name: str, lat: float, lon: float,
     except Exception as e:
         logger.debug("Historical model proxy failed for %s %s: %s", model_name, target_date, e)
         return None
+
+
+def fetch_hourly_temps(lat: float, lon: float, target_date: str,
+                       timezone: str) -> list[dict]:
+    """
+    Hourly temperature forecast for one local calendar day.
+
+    Returns [{"time": "2026-06-12T15:00", "temp_c": 31.2}, ...] in the city's
+    local timezone (Open-Meteo best_match model). Used by the dashboard's
+    position-outlook view — answers "what hour gets closest to the bucket".
+    """
+    resp = _get_with_retry(
+        "https://api.open-meteo.com/v1/forecast",
+        {
+            "latitude":   lat,
+            "longitude":  lon,
+            "hourly":     "temperature_2m",
+            "timezone":   timezone,
+            "start_date": target_date,
+            "end_date":   target_date,
+        },
+    )
+    hourly = resp.json().get("hourly", {})
+    times = hourly.get("time", [])
+    temps = hourly.get("temperature_2m", [])
+    return [
+        {"time": t, "temp_c": float(v)}
+        for t, v in zip(times, temps)
+        if v is not None
+    ]
