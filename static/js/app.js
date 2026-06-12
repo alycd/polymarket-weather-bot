@@ -176,7 +176,11 @@ function fmtOutlookCell(d) {
   const title = `Day-high estimate ${d.day_max}° (${isObs ? 'already observed' : 'forecast peak'}) vs bucket ` +
     `${d.bucket.lo ?? ''}–${d.bucket.hi ?? ''}° — ${verdict}. ` +
     `${d.favorable ? 'Good' : 'Bad'} for your ${d.direction}. Click row for hourly detail.`;
-  return `<span class="mono ${cls}" style="font-size:11px" title="${title}">high ${d.day_max}° ${src} → ${verdict}</span>`;
+  // Always show WU's current running max (the official scoreboard so far),
+  // even when the forecast peak is what drives the verdict.
+  const wuNow = d.obs && d.obs.wu_max != null
+    ? ` <span class="md">· WU now ${d.obs.wu_max}°</span>` : '';
+  return `<span class="mono ${cls}" style="font-size:11px" title="${title}">high ${d.day_max}° ${src} → ${verdict}${wuNow}</span>`;
 }
 function _fillOutlooks(pos) {
   pos.filter(p => !p.pm_row && p.bucket_unit && p.bucket_unit !== 'PM').forEach(p => {
