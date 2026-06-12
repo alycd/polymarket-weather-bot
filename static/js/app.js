@@ -217,10 +217,19 @@ function renderModalOutlook(trade) {
         : `<span class="md">Official WU max: not yet reported</span>`;
       const rate = d.obs.rate_c_per_h != null
         ? (d.obs.rate_c_per_h > 0 ? ' ↑' : ' ↓') + Math.abs(d.obs.rate_c_per_h) + '°C/h' : '';
+      // ASOS normally LEADS WU (faster feed → official print catches up). When
+      // ASOS reads BELOW WU's print, our ASOS pull is stale/partial (rate
+      // limits) — say so instead of implying the official number may drop.
+      const asosAhead = d.obs.max != null && (d.obs.wu_max == null || d.obs.max > d.obs.wu_max);
+      const asosNote = asosAhead ? '(leads WU)' : '(stale/partial feed)';
       const asos = d.obs.max != null
-        ? ` · ASOS ${d.obs.max}°${rate} <span class="md">(leads WU)</span>` : '';
+        ? ` · ASOS ${d.obs.max}°${rate} <span class="md">${asosNote}</span>` : '';
       obs = '<br>' + wu + asos;
-      if (d.obs.disagree) obs += ' <span class="y fw6">⚠ WU differs from ASOS — official print may move</span>';
+      if (d.obs.disagree) {
+        obs += asosAhead
+          ? ' <span class="y fw6">⚠ ASOS above WU — official print likely to rise</span>'
+          : ' <span class="md">⚠ ASOS behind WU — trust the official number</span>';
+      }
     }
     const strip = d.hourly
       .filter(h => { const H = parseInt(h.time.slice(0, 2), 10); return H >= 8 && H <= 21; })
