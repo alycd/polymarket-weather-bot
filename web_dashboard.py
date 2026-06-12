@@ -581,33 +581,49 @@ def position_outlook(trade_id):
 
         # Live observed running max (only meaningful for today, local time).
         # Cached separately: obs move faster than forecasts, but ASOS 429s
-        # aggressive polling.
+        # aggressive polling. fresh=1 (modal click) bypasses the cache so the
+        # WU number is read at that moment.
         obs = None
+        fresh = request.args.get("fresh", "") == "1"
         try:
             from zoneinfo import ZoneInfo
-            today_local = datetime.now(ZoneInfo(cfg["timezone"])).date().isoformat()
+            tz = ZoneInfo(cfg["timezone"])
+            today_local = datetime.now(tz).date().isoformat()
             if target_date == today_local:
                 oc = _obs_cache.get(trade["city"])
-                if oc and now - oc["ts"] < _OBS_TTL:
+                if oc and now - oc["ts"] < _OBS_TTL and not fresh:
                     obs_c = oc["data"]
                 else:
                     from signals.nowcaster import get_running_max_c
-                    from data.wunderground import get_running_max_wu
                     max_c, rate = get_running_max_c(trade["city"])
-                    # WU is what Polymarket resolves from — fetch its own
-                    # number separately rather than trusting the METAR blend.
-                    wu_c = get_running_max_wu(cfg["icao"]) if cfg.get("icao") else None
-                    obs_c = ({"max_c": max_c, "rate": rate, "wu_c": wu_c}
-                             if (max_c is not None or wu_c is not None) else None)
+                    # WU is what Polymarket resolves from — read its print
+                    # directly from the api.weather.com backend (native unit;
+                    # same source the resolution path uses). Page-scrape fallback.
+                    wu_native = None
+                    try:
+                        from data.wunderground import get_historical_high_native
+                        wu_native = get_historical_high_native(cfg["icao"], target_date, unit)
+                    except Exception as wu_err:
+                        logger.debug("WU backend obs failed for %s: %s", cfg["icao"], wu_err)
+                        try:
+                            from data.wunderground import get_running_max_wu
+                            wu_c = get_running_max_wu(cfg["icao"])
+                            if wu_c is not None:
+                                wu_native = _c_to_unit(wu_c, unit)
+                        except Exception:
+                            pass
+                    obs_c = ({"max_c": max_c, "rate": rate, "wu_native": wu_native,
+                              "asof": datetime.now(tz).strftime("%H:%M")}
+                             if (max_c is not None or wu_native is not None) else None)
                     _obs_cache[trade["city"]] = {"ts": now, "data": obs_c}
                 if obs_c:
-                    obs = {}
+                    obs = {"asof": obs_c.get("asof")}
                     if obs_c.get("max_c") is not None:
                         obs["max"] = round(_c_to_unit(obs_c["max_c"], unit), 1)
                         obs["rate_c_per_h"] = (round(obs_c["rate"], 2)
                                                if obs_c.get("rate") is not None else None)
-                    if obs_c.get("wu_c") is not None:
-                        obs["wu_max"] = round(_c_to_unit(obs_c["wu_c"], unit), 1)
+                    if obs_c.get("wu_native") is not None:
+                        obs["wu_max"] = round(obs_c["wu_native"], 1)
                     if obs.get("max") is not None and obs.get("wu_max") is not None:
                         obs["disagree"] = abs(obs["max"] - obs["wu_max"]) >= 1.0
         except Exception as e:

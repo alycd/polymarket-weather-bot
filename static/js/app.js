@@ -148,10 +148,10 @@ function renderPills(d) {
 
 // ── position outlook (hourly forecast vs bucket) ──────────────────────────────
 var _outlooks = new Map();   // trade_id → {ts, data}; backend caches 15m, we 10m
-function fetchOutlook(tradeId) {
+function fetchOutlook(tradeId, fresh) {
   const c = _outlooks.get(tradeId);
-  if (c && Date.now() - c.ts < 600000) return Promise.resolve(c.data);
-  return fetch('/api/outlook/' + encodeURIComponent(tradeId) + '?mode=' + _mode)
+  if (!fresh && c && Date.now() - c.ts < 600000) return Promise.resolve(c.data);
+  return fetch('/api/outlook/' + encodeURIComponent(tradeId) + '?mode=' + _mode + (fresh ? '&fresh=1' : ''))
     .then(r => r.json())
     .then(d => { if (!d.error) _outlooks.set(tradeId, {ts: Date.now(), data: d}); return d; })
     .catch(() => ({error: 'fetch failed'}));
@@ -159,6 +159,10 @@ function fetchOutlook(tradeId) {
 function _hr12(hhmm) {
   const H = parseInt(hhmm.slice(0, 2), 10);
   return (H % 12 || 12) + (H < 12 ? 'am' : 'pm');
+}
+function _hr12m(hhmm) {  // "15:42" → "3:42pm" (station-local)
+  const H = parseInt(hhmm.slice(0, 2), 10);
+  return (H % 12 || 12) + ':' + hhmm.slice(3, 5) + (H < 12 ? 'am' : 'pm');
 }
 function fmtOutlookCell(d) {
   if (!d || d.error) return '<span class="md">—</span>';
@@ -195,8 +199,10 @@ function renderModalOutlook(trade) {
     return;
   }
   box.style.display = '';
-  box.innerHTML = '<span class="md">Loading hourly outlook…</span>';
-  fetchOutlook(String(trade.trade_id)).then(d => {
+  box.innerHTML = '<span class="md">Loading hourly outlook… (reading WU live)</span>';
+  // fresh=1: a modal click reads WU's current print at that moment, bypassing
+  // the 5-min server / 10-min browser caches the table cells use.
+  fetchOutlook(String(trade.trade_id), true).then(d => {
     if (!d || d.error) { box.innerHTML = '<span class="md">Outlook unavailable: ' + (d && d.error || '?') + '</span>'; return; }
     const u = d.bucket.unit;
     const bucketStr = (d.bucket.lo != null ? d.bucket.lo : '−∞') + '–' + (d.bucket.hi != null ? d.bucket.hi : '∞') + '°' + u;
@@ -212,9 +218,10 @@ function renderModalOutlook(trade) {
     if (d.obs) {
       // WU is what Polymarket resolves from — its printed max is the official
       // number, shown first. ASOS is the faster station feed WU converges to.
+      const asof = d.obs.asof ? ` as of ${_hr12m(d.obs.asof)}` : '';
       const wu = d.obs.wu_max != null
-        ? `<span class="fw6">Official WU max: ${d.obs.wu_max}°</span> <span class="md">(resolution source)</span>`
-        : `<span class="md">Official WU max: not yet reported</span>`;
+        ? `<span class="fw6">Official WU max: ${d.obs.wu_max}°</span> <span class="md">(resolution source,${asof})</span>`
+        : `<span class="md">Official WU max: not yet reported${asof ? ' (checked' + asof + ')' : ''}</span>`;
       const rate = d.obs.rate_c_per_h != null
         ? (d.obs.rate_c_per_h > 0 ? ' ↑' : ' ↓') + Math.abs(d.obs.rate_c_per_h) + '°C/h' : '';
       // ASOS normally LEADS WU (faster feed → official print catches up). When
