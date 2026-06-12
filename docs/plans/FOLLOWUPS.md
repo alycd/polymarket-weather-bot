@@ -13,6 +13,7 @@ _Last updated: 2026-06-12_
 
 | Due | Item | Action when due | Source |
 |---|---|---|---|
+| **2026-06-13** | Completed-day WU High vs hourly table (resolution fetch may understate) | Check wunderground.com/history/daily/KDEN/date/2026-06-12 now that the day is complete: if page High persists at 90°F while the v1 hourly-obs max is ≤88, fix `get_historical_high_native` to use the page-summary High (native unit, continuous max) and re-run the audit's temp comparisons | `2026-06-12_wu_asos_divergence.md` (Update section) |
 | **2026-06-16** | T+1 `ensemble_std ≥ 1.0` gate forward review (shipped paper 06-09, in LIVE config since 06-10 sync) | Evaluate T+1 trades since 06-09: gate-on book vs counterfactual; keep or rollback (`T_PLUS_ONE_MIN_STD = 0.0`). Track as its own line, separate from the 06-09 guards. | `2026-06-09_tplus1_leadtime_and_upstream.md` |
 | **2026-06-23** | Accuracy-guards forward review: `MAX_EDGE_ABS=0.40`, YES pause (`ENABLE_YES_BETS=False`), high-conviction Kelly boost neutralized (shipped 06-09; in live since 06-10) | Check forward win-rate/ROI of would-have-been-blocked trades; decide keep/adjust each guard independently | `2026-06-09_forward_tests.md` |
 | **2026-06-23** | Low-price win-prob relaxation review (`LOW_PRICE_WINPROB_THRESHOLD=0.45`, shipped 06-09) | Did the new sub-0.45-entry NO volume hold ≥ break-even? Rollback: `THRESHOLD = 0.0` | `2026-06-09_forward_tests.md` |

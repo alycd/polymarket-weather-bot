@@ -1,8 +1,29 @@
 # WU vs ASOS Divergence — Settlement Risk Note
 
 **Date:** 2026-06-12
-**Status:** FINDING — documented risk, no code change pending. Candidate analysis
-item if boundary-trade losses cluster.
+**Status:** FINDING — partially CORRECTED same day (see Update below). Candidate
+analysis item if boundary-trade losses cluster.
+
+## UPDATE (2026-06-12 evening): much of the "divergence" was our read artifact
+
+User caught the dashboard showing "Official WU max 87°" while the live WU page
+for KDEN showed High **90°**. Root cause: **WU's page High is the CONTINUOUS
+sensor max** (v3 `temperatureMaxSince7Am` = 90), while our backend read maxed
+the **hourly observation table** (87) — the 90° spike happened between hourly
+prints and never appears in that table. Fixed intraday via
+`get_today_max_native` (max of the continuous field and the hourly max).
+
+This reframes the audit rows below: WU likely did NOT diverge from ASOS as much
+as our hourly-table reads implied — e.g. Denver 05-28 "WU final print 75" was
+the hourly-table max; the page High was plausibly 76 (continuous), matching
+both ASOS (76.0) and Polymarket's settlement. **The real divergence is
+hourly-table vs continuous-max, and our resolution fetch
+(`get_historical_high_native`) reads the hourly table — it may understate
+completed-day highs.** Empirical test queued for 2026-06-13: check the KDEN
+page for 06-12 after the day completes — if High persists at 90 while the
+hourly table maxes ≤88, fix the resolution fetch to use the page-summary value
+(native unit). Tracked in FOLLOWUPS.md. Mitigation meanwhile: resolution step 1
+is Polymarket's own `winner` field; the weather fallback rarely fires.
 
 ## Finding
 

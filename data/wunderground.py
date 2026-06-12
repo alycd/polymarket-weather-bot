@@ -145,6 +145,45 @@ def get_historical_high_native(icao: str, target_date: str, unit: str) -> float:
         raise WundergroundError(f"WU api.weather.com fetch failed for {icao} {target_date}: {e}") from e
 
 
+def get_today_max_native(icao: str, today_local: str, unit: str) -> float | None:
+    """
+    The High WU's page shows for the CURRENT day, in the native unit.
+
+    The page's intraday High is the CONTINUOUS sensor max, not the max of the
+    hourly observation table — verified KDEN 2026-06-12: page High 90°F
+    (v3 temperatureMaxSince7Am) while the hourly obs list peaked at 87°F (the
+    90° spike happened between hourly prints). So: max of the v3 since-7am
+    continuous field and today's hourly-obs max (which covers midnight–7am,
+    the window since-7am misses). Returns None if both sources fail.
+    """
+    api_unit = "e" if str(unit).upper().startswith("F") else "m"
+    candidates = []
+    try:
+        r = requests.get(f"{_WX_HOST}/v3/wx/observations/current",
+                         params={"apiKey": _WU_API_KEY, "units": api_unit,
+                                 "icaoCode": icao, "language": "en-US", "format": "json"},
+                         headers=_HEADERS, timeout=TIMEOUT)
+        if r.status_code == 401 and _refresh_api_key():
+            r = requests.get(f"{_WX_HOST}/v3/wx/observations/current",
+                             params={"apiKey": _WU_API_KEY, "units": api_unit,
+                                     "icaoCode": icao, "language": "en-US", "format": "json"},
+                             headers=_HEADERS, timeout=TIMEOUT)
+        if r.ok:
+            j = r.json()
+            # Guard: only trust since-7am if the ob is actually from today local
+            if str(j.get("validTimeLocal", ""))[:10] == today_local:
+                v = j.get("temperatureMaxSince7Am")
+                if v is not None:
+                    candidates.append(float(v))
+    except Exception as e:
+        logger.debug("WU v3 current obs failed for %s: %s", icao, e)
+    try:
+        candidates.append(get_historical_high_native(icao, today_local, unit))
+    except Exception as e:
+        logger.debug("WU hourly-obs max failed for %s: %s", icao, e)
+    return max(candidates) if candidates else None
+
+
 def get_hourly_forecast_native(icao: str, target_date: str, unit: str) -> list[dict]:
     """
     TWC hourly temperature FORECAST for the station's target local date — the same

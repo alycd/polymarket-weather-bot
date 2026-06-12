@@ -596,15 +596,17 @@ def position_outlook(trade_id):
                 else:
                     from signals.nowcaster import get_running_max_c
                     max_c, rate = get_running_max_c(trade["city"])
-                    # WU is what Polymarket resolves from — read its print
-                    # directly from the api.weather.com backend (native unit;
-                    # same source the resolution path uses). Page-scrape fallback.
+                    # WU is what Polymarket resolves from. The page's intraday
+                    # High is the CONTINUOUS sensor max (since-7am field), not
+                    # the hourly obs table — get_today_max_native combines both.
+                    # Page-scrape fallback for when the backend misbehaves.
                     wu_native = None
                     try:
-                        from data.wunderground import get_historical_high_native
-                        wu_native = get_historical_high_native(cfg["icao"], target_date, unit)
+                        from data.wunderground import get_today_max_native
+                        wu_native = get_today_max_native(cfg["icao"], today_local, unit)
                     except Exception as wu_err:
                         logger.debug("WU backend obs failed for %s: %s", cfg["icao"], wu_err)
+                    if wu_native is None:
                         try:
                             from data.wunderground import get_running_max_wu
                             wu_c = get_running_max_wu(cfg["icao"])
