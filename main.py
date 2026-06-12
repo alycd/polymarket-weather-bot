@@ -1402,25 +1402,15 @@ def _closing_soon_liquidity_ok(trade, direction, exit_val, shares, max_discount)
       NO  position → NO-token bid  = 1 - (YES-token best ask)
       YES position → YES-token bid =     (YES-token best bid)
     """
-    from data.polymarket import get_clob_orderbook
+    from data.polymarket import get_clob_orderbook, exit_side_levels
     yes_token = trade.get("clob_token_yes", "")
     try:
         book = get_clob_orderbook(yes_token)
-        yes_bids = sorted(((float(b["price"]), float(b["size"])) for b in book.get("bids", [])),
-                          key=lambda x: -x[0])
-        yes_asks = sorted(((float(a["price"]), float(a["size"])) for a in book.get("asks", [])),
-                          key=lambda x: x[0])
+        levels = exit_side_levels(book, direction)
     except Exception as e:
         return False, f"book fetch failed: {e}"
 
     floor_price = exit_val - max_discount
-    if direction == "NO":
-        # Selling NO = buying back YES from the ask side. NO-bid level n has
-        # price (1 - yes_ask_n) and depth = that ask level's size.
-        levels = [(round(1.0 - p, 6), sz) for p, sz in yes_asks]
-    else:
-        levels = list(yes_bids)
-
     if not levels:
         return False, "no resting bids"
     best = levels[0][0]

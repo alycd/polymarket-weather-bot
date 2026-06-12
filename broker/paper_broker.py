@@ -40,9 +40,11 @@ def execute_paper_trade(
     # price to get approximate USDC value.  This rejects phantom quotes that look
     # liquid on mid but have nothing behind them.
     MIN_BOOK_DEPTH_USDC = 150.0
+    exit_depth = None   # exit-side depth near best ($) — measure-only, persisted on the trade
     if market.get("market_type", "temperature") not in ("tsa", "crypto"):
         try:
-            from data.polymarket import get_clob_orderbook
+            from data.polymarket import get_clob_orderbook, exit_depth_usdc
+            from config_active import EXIT_DEPTH_WINDOW
             book      = get_clob_orderbook(market.get("clob_token_yes", ""))
             bid_depth = sum(
                 float(b.get("size", 0)) * float(b.get("price", 0))
@@ -59,6 +61,16 @@ def execute_paper_trade(
                     total_depth, MIN_BOOK_DEPTH_USDC, market_id[:16],
                 )
                 return {"skipped": f"book_depth_too_thin (${total_depth:.0f})"}
+            # Phase-1 exit-liquidity measurement (no gating yet — see
+            # docs/plans/2026-06-12_exit_liquidity_sizing.md): how many dollars
+            # rest on the side our exit would sell into, near the best price.
+            exit_depth = exit_depth_usdc(book, signal["direction"], EXIT_DEPTH_WINDOW)
+            if exit_depth is not None:
+                pct = signal["size_usdc"] / exit_depth * 100 if exit_depth > 0 else float("inf")
+                logger.info("exit-depth: $%.0f within %.2f of best (size $%.2f → %.0f%% of exit depth) %s",
+                            exit_depth, EXIT_DEPTH_WINDOW, signal["size_usdc"], pct, market_id[:16])
+            else:
+                logger.info("exit-depth: no resting exit-side liquidity for %s", market_id[:16])
         except Exception as _bd_err:
             logger.debug("Book depth check failed for %s: %s — proceeding",
                          market_id[:16], _bd_err)
@@ -239,6 +251,7 @@ def execute_paper_trade(
         market_type=market.get("market_type", "temperature"),
         hub_weather_flag=signal.get("hub_weather_flag"),
         clob_token_yes=market.get("clob_token_yes", ""),
+        exit_depth_usdc=exit_depth,
     )
 
     db.log_event("TRADE_OPENED", log_msg, city=city, icao=icao, data=signal)

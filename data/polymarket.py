@@ -324,6 +324,42 @@ def get_clob_orderbook(token_id: str) -> dict:
     return resp.json()
 
 
+def exit_side_levels(book: dict, direction: str) -> list[tuple[float, float]]:
+    """
+    The book levels a position's EXIT would sell into, as [(price, shares)]
+    sorted best-first (highest price first), priced in the held token:
+
+      YES position → YES-token bids, as quoted.
+      NO  position → NO-token bids: level n has price (1 - yes_ask_n) and the
+                     depth of that YES ask level.
+
+    `book` is a YES-token order book from get_clob_orderbook(). Used by both
+    the closing-soon exit gate and the entry-time exit_depth_usdc measurement
+    (docs/plans/2026-06-12_exit_liquidity_sizing.md) — keep them on this one
+    transform so they can't drift.
+    """
+    if direction == "NO":
+        levels = [(round(1.0 - float(a["price"]), 6), float(a["size"]))
+                  for a in book.get("asks", [])]
+    else:
+        levels = [(float(b["price"]), float(b["size"]))
+                  for b in book.get("bids", [])]
+    return sorted(levels, key=lambda x: -x[0])
+
+
+def exit_depth_usdc(book: dict, direction: str, window: float) -> float | None:
+    """
+    Dollar value resting within `window` of the exit-side best price — the
+    liquidity an early exit could realistically hit. None if the exit side
+    is empty (no bids = no measurable exit).
+    """
+    levels = exit_side_levels(book, direction)
+    if not levels:
+        return None
+    floor_price = levels[0][0] - window
+    return round(sum(px * sz for px, sz in levels if px >= floor_price), 2)
+
+
 def get_market_prices(market: dict) -> dict:
     """
     Fetch live bid, ask, and mid for a YES token from the CLOB orderbook.

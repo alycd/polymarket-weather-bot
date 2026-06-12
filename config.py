@@ -155,6 +155,13 @@ LIVE_EXIT_MAX_DISCOUNT      = 0.10   # closing-soon: max discount to fair before
 LIVE_MAX_ORDER_AGE_S        = 600    # reconciler cancels resting orders older than this (s)
 LIVE_BANKROLL_DRIFT_ALERT   = 5.0    # $ divergence (DB vs chain) before alerting
 
+# Exit-liquidity measurement (phase 1, measure-only — see
+# docs/plans/2026-06-12_exit_liquidity_sizing.md). At entry we record the
+# dollar depth on the EXIT side of the position within this window of the
+# exit-side best price (trades.exit_depth_usdc). Nothing acts on it yet;
+# phase 2 (size cap / floor) will be tuned from the logged distribution.
+EXIT_DEPTH_WINDOW           = 0.05   # price window below exit-side best
+
 # Per-city additive forecast bias corrections (°C added to ensemble mean).
 # Applied on top of per-model bias corrections for cities where ASOS data is
 # unavailable (international stations) or where systematic grid-point mismatch exists.

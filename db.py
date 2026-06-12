@@ -302,6 +302,13 @@ def init_db():
             conn.execute("ALTER TABLE trades ADD COLUMN exit_fill_status TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass
+        # Exit-side book depth ($) within EXIT_DEPTH_WINDOW of best at entry time.
+        # Measure-only (phase 1 of docs/plans/2026-06-12_exit_liquidity_sizing.md);
+        # nothing reads it yet. NULL for legacy rows and tsa/crypto markets.
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN exit_depth_usdc REAL")
+        except Exception:
+            pass
         # bankroll_fix_applied migration has been fully applied and retired.
         # Bankroll is now authoritative from set_bankroll() after manual correction (2026-05-24).
         conn.execute("UPDATE trades SET bankroll_fix_applied=1 WHERE bankroll_fix_applied=0")
@@ -823,7 +830,7 @@ def open_trade_atomic(trade_id, market_id, city, icao, target_date, bucket_lo, b
                       bucket_unit, direction, entry_price, model_prob, market_prob, edge,
                       ensemble_std, size_usdc, kelly_f, target_date_end=None,
                       market_type="temperature", hub_weather_flag=None,
-                      clob_token_yes=""):
+                      clob_token_yes="", exit_depth_usdc=None):
     """
     Deduct stake from bankroll AND insert trade record in a single transaction.
     If either operation fails the entire transaction rolls back, preventing the
@@ -836,14 +843,14 @@ def open_trade_atomic(trade_id, market_id, city, icao, target_date, bucket_lo, b
                 (trade_id, market_id, city, icao, target_date, bucket_lo, bucket_hi,
                  bucket_unit, direction, entry_price, model_prob, market_prob, edge,
                  ensemble_std, size_usdc, kelly_f, status, entry_time, target_date_end,
-                 market_type, hub_weather_flag, clob_token_yes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?)
+                 market_type, hub_weather_flag, clob_token_yes, exit_depth_usdc)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?)
         """, (trade_id, market_id, city, icao, target_date, bucket_lo, bucket_hi,
               bucket_unit, direction, entry_price, model_prob, market_prob, edge,
               ensemble_std, size_usdc, kelly_f, datetime.utcnow().isoformat(),
               target_date_end, market_type,
               int(hub_weather_flag) if hub_weather_flag is not None else None,
-              clob_token_yes or ""))
+              clob_token_yes or "", exit_depth_usdc))
 
 
 def already_in_market(market_id) -> bool:
