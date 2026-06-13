@@ -13,17 +13,27 @@ the **hourly observation table** (87) — the 90° spike happened between hourly
 prints and never appears in that table. Fixed intraday via
 `get_today_max_native` (max of the continuous field and the hourly max).
 
-This reframes the audit rows below: WU likely did NOT diverge from ASOS as much
-as our hourly-table reads implied — e.g. Denver 05-28 "WU final print 75" was
-the hourly-table max; the page High was plausibly 76 (continuous), matching
-both ASOS (76.0) and Polymarket's settlement. **The real divergence is
-hourly-table vs continuous-max, and our resolution fetch
-(`get_historical_high_native`) reads the hourly table — it may understate
-completed-day highs.** Empirical test queued for 2026-06-13: check the KDEN
-page for 06-12 after the day completes — if High persists at 90 while the
-hourly table maxes ≤88, fix the resolution fetch to use the page-summary value
-(native unit). Tracked in FOLLOWUPS.md. Mitigation meanwhile: resolution step 1
-is Polymarket's own `winner` field; the weather fallback rarely fires.
+### RESOLVED 2026-06-13: the page uses the observation max; my "fix" overshoot
+
+The 06-13 test settled it: the Denver 06-12 **history-page High reads 87.8°F**,
+not 90. Yesterday's "90" was WU's **live current-conditions widget**
+(`temperatureMaxSince7Am`) — a separate, more aggressive number that does NOT
+drive the history-page High Polymarket resolves on. Toronto 06-13 is the clean
+confirmation: page High 29°C, but `temperatureMaxSince7Am` = 86°F = 30.00°C →
+our 06-12 dashboard helper showed 30 and flipped a real HIT into a reassuring
+MISS on an open NO position.
+
+Corrected: `get_today_max_native` now delegates to `get_historical_high_native`
+(the observation-derived fetch the resolution path already uses), so the
+dashboard "Official WU max" always equals what the bot resolves on. **No
+resolution-path change was ever needed — `get_historical_high_native` was
+correct throughout.** The audit's "3/20 divergence" rows were measurement noise
+from the brief window I trusted the continuous field, not real WU-vs-ASOS gaps.
+
+Net residual finding: WU's history-page High = max of the hourly observation
+table (the °F integer print). ASOS/IEM can still occasionally exceed it via
+special obs, but that's rarer than the 3/20 figure suggested. The
+nowcaster-vs-settlement boundary risk below still stands as a watch item.
 
 ## Finding
 
