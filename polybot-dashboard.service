@@ -5,11 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=aadichauhan
-WorkingDirectory=/home/aadichauhan/polymarket_bot
-ExecStart=/home/aadichauhan/polymarket_bot/venv/bin/python web_dashboard.py
-Restart=on-failure
-RestartSec=15
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-weather-bot
+# WorkingDirectory must be the repo so web_dashboard.py's load_dotenv() picks up
+# DASHBOARD_USER / DASHBOARD_PASSWORD (and the rest of .env) for auth.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymarket-weather-bot/.venv/bin/python web_dashboard.py
+Restart=always
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 

@@ -197,6 +197,8 @@ tbody tr.row-click:hover td { background: rgba(255,255,255,0.04); }
 
 .stale-bar { background: rgba(255,184,0,0.1); border-bottom: 1px solid rgba(255,184,0,0.2); padding: 12px 24px; font-size: 13px; font-weight: 600; color: var(--amber); display: none; text-align: center; justify-content: center; gap: 8px; backdrop-filter: blur(8px); }
 .stale-bar.show { display: flex; }
+.scan-stale-bar { background: rgba(255,42,95,0.10); border-bottom: 1px solid rgba(255,42,95,0.25); padding: 12px 24px; font-size: 13px; font-weight: 600; color: var(--red); display: none; text-align: center; justify-content: center; gap: 8px; backdrop-filter: blur(8px); }
+.scan-stale-bar.show { display: flex; }
 .data-mode-banner {
   padding: 8px 24px;
   font-size: 12px;

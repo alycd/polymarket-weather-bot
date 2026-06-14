@@ -568,10 +568,13 @@ function renderOps(ops) {
   const e = ops.jobs['exit-scan'] || {};
   const r = ops.jobs['resolve'] || {};
   const om = (ops.datasources && ops.datasources.openmeteo) || {};
+  const h = ops.health || {};
+  const ageTxt = (h.scan_age_min == null) ? 'never' : h.scan_age_min + 'm ago';
   const line = (k, v, cls='md') => `<div class="ops-line"><span class="ops-k">${k}</span><span class="ops-v ${cls}">${v}</span></div>`;
   card.innerHTML = `
     <div class="card-hdr"><span class="card-title glow-text">Ops</span></div>
     <div class="ops-wrap">
+      ${line('Scan freshness', h.scan_stale ? `STALE — ${ageTxt}` : `ok — ${ageTxt}`, h.scan_stale ? 'r' : 'g')}
       ${line('Open-Meteo health', String(om.state || 'ok').toUpperCase(), (om.state==='offline'?'r':om.state==='degraded'?'y':'g'))}
       ${line('Scan last success', _fmtIso(s.last_success_at))}
       ${line('Exit-scan last success', _fmtIso(e.last_success_at))}
@@ -780,6 +783,16 @@ function load(force) {
       }
       const firstRender = _firstLoad;
       document.getElementById('stale-bar').classList.toggle('show', !!d.stale);
+      const _h = (d.ops && d.ops.health) || {};
+      const _ssb = document.getElementById('scan-stale-bar');
+      if (_ssb) {
+        _ssb.classList.toggle('show', !!_h.scan_stale);
+        const _msg = document.getElementById('scan-stale-msg');
+        if (_msg) {
+          const _age = (_h.scan_age_min == null) ? 'never run' : _h.scan_age_min + ' min ago';
+          _msg.textContent = `⚠ Scanner stale — last successful scan ${_age} (threshold ${_h.stale_threshold_min || 45}m). The daemon may be down or crash-looping.`;
+        }
+      }
       document.getElementById('ts').textContent = d.ts || '—';
       _lastLoadTs = Date.now() / 1000;
       renderHero(d);

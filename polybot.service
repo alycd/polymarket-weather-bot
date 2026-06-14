@@ -5,11 +5,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=aadichauhan
-WorkingDirectory=/home/aadichauhan/polymarket_bot
-ExecStart=/home/aadichauhan/polymarket_bot/venv/bin/python daemon.py
-Restart=on-failure
-RestartSec=30
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymarket-weather-bot
+# No venv "activation" needed: pointing ExecStart at the venv's interpreter is
+# what makes its packages importable. WorkingDirectory must be the repo so the
+# code's load_dotenv() finds .env (secrets are NOT passed via the environment).
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymarket-weather-bot/.venv/bin/python daemon.py --mode paper
+Restart=always
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 

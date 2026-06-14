@@ -30,6 +30,26 @@ def _safe_json(raw: str | None, default):
         return default
 
 
+# With the scheduler collision fixed, scans run every 30 min around the clock
+# (opportunistic) plus the fixed model-run slots. Flag the book as stale if no
+# scan has SUCCEEDED within this window — the daemon is likely dead, starved, or
+# crash-looping, and silent scan stoppage is exactly the failure that lets live
+# opportunities slip by unnoticed.
+STALE_SCAN_MIN = 45
+
+
+def _age_minutes(iso: str | None) -> float | None:
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
 def _dur_key(job_type: str) -> str:
     return f"ops:durations:{job_type}"
 
@@ -197,8 +217,15 @@ def get_ops_snapshot() -> dict:
             "p95_duration_s": get_duration_p95(jt),
             "lock": lock,
         }
+    scan_age = _age_minutes(jobs["scan"]["last_success_at"])
+    health = {
+        "scan_age_min": round(scan_age, 1) if scan_age is not None else None,
+        "scan_stale": (scan_age is None) or (scan_age > STALE_SCAN_MIN),
+        "stale_threshold_min": STALE_SCAN_MIN,
+    }
     return {
         "jobs": jobs,
+        "health": health,
         "datasources": {
             "openmeteo": get_datasource_health("openmeteo"),
             "polymarket": get_datasource_health("polymarket"),

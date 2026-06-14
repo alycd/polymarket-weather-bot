@@ -16,6 +16,7 @@ Run once:
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 import time
 import subprocess
 import sys
@@ -171,9 +172,16 @@ def _run(flag: str, label: str, mode: str = "paper"):
 
 
 def run(mode: str = "paper"):
-    log.info("Daemon starting in %s mode.", mode)
     import os
     os.makedirs("logs", exist_ok=True)
+    # Persist daemon logs to a rotating file (in addition to stdout/journal) so
+    # there's an auditable record of when scans fired and why one stopped —
+    # whether running under systemd (journal) or bare in tmux (ephemeral stdout).
+    _fh = RotatingFileHandler("logs/daemon.log", maxBytes=5_000_000, backupCount=5)
+    _fh.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-8s %(message)s", "%Y-%m-%d %H:%M:%S"))
+    logging.getLogger().addHandler(_fh)
+    log.info("Daemon starting in %s mode.", mode)
 
     while True:
         now = datetime.now(timezone.utc)
@@ -184,11 +192,21 @@ def run(mode: str = "paper"):
             time.sleep(3600)
             continue
 
-        next_fire, next_flag, next_label = schedule[0]
+        next_fire = schedule[0][0]
+        # Every event stamped at this same fire time forms one batch and must run
+        # in this single wake. _run() BLOCKS (a full scan takes ~60s), and the
+        # loop rebuilds the schedule each pass with a `fire > now` filter — so
+        # any event coincident with a slow job would be silently dropped as
+        # "already in the past" on the next rebuild. That starved the 30-min
+        # opportunistic --scan and the --exit-scan that share every :00/:30 slot
+        # (and both got dropped at the 13:30 fixed-scan slot). Run the whole
+        # coincident batch back-to-back instead of just schedule[0].
+        batch = [ev for ev in schedule if ev[0] == next_fire]
         wait_secs = (next_fire - now).total_seconds()
 
-        log.info("Next: %s at %s UTC (in %.0fm)",
-                 next_label,
+        extra = f"  (+{len(batch) - 1} more in this slot)" if len(batch) > 1 else ""
+        log.info("Next: %s%s at %s UTC (in %.0fm)",
+                 batch[0][2], extra,
                  next_fire.strftime("%H:%M"),
                  wait_secs / 60)
 
@@ -198,9 +216,11 @@ def run(mode: str = "paper"):
         # Re-check time after sleep (handles system clock drift / DST)
         now2 = datetime.now(timezone.utc)
         if abs((now2 - next_fire).total_seconds()) < 120:
-            _run(next_flag, next_label, mode=mode)
+            for _fire, flag, label in batch:
+                _run(flag, label, mode=mode)
         else:
-            log.warning("Clock drift detected, re-evaluating schedule")
+            log.warning("Clock drift detected (woke %.0fs from target) — re-evaluating",
+                        (now2 - next_fire).total_seconds())
 
 
 if __name__ == "__main__":
