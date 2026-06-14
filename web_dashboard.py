@@ -407,6 +407,10 @@ def _build_data(mode: str, days: int | None = None) -> dict:
         history_raw = [t for t in history_raw if (t.get("resolved_at") or "") >= since]
     trades = _enrich_trades(open_trades_raw, current_path)
     history = _enrich_trades(history_raw, current_path)
+    # Most-recently-CLOSED first. get_all_trades() orders by entry_time, but the
+    # history tab wants resolution order (resolved_at); fall back to entry_time
+    # for any row missing a close timestamp (ISO strings sort lexicographically).
+    history.sort(key=lambda t: (t.get("resolved_at") or t.get("entry_time") or ""), reverse=True)
 
     live_prices = db.get_latest_prices_for_markets([t["market_id"] for t in trades if t.get("market_id")])
     for t in trades:
