@@ -1582,6 +1582,94 @@ def cmd_exit_scan(dry_run=False):
           f"| Bankroll: {B}${db.get_bankroll():.2f}{RST}\n")
 
 
+# ── --close <trade_id> ──────────────────────────────────────────────────────────
+
+def cmd_close_trade(trade_id, dry_run=False):
+    """Manually close a single open position at the current live price.
+
+    Routes through the SAME exit machinery as --exit-scan: in PAPER it resolves
+    at the simulated fill; in LIVE it submits a real CLOB sell via
+    _live_exit_scan (fill polling, correct token, never a fictional price). This
+    is the user-initiated force-close — no model/edge gate, since the human has
+    already decided to exit. Caller should hold the 'exit-scan' lock to avoid
+    racing the daemon's exit-scan on the same trade.
+    """
+    from data.polymarket import get_market_prices
+
+    trade = db.get_trade(trade_id)
+    if trade is None:
+        print(f"  {R}No trade with id {trade_id}{RST}")
+        return
+    if trade["status"] != "open":
+        print(f"  {Y}Trade {trade_id[:8]} is not open (status={trade['status']}) "
+              f"— nothing to close.{RST}")
+        return
+
+    city        = trade["city"]
+    direction   = trade["direction"]
+    entry_price = trade["entry_price"]
+    size        = trade["size_usdc"]
+
+    # Live price + direction-aware exit value (identical to exit-scan).
+    market_stub = {"market_id": trade["market_id"],
+                   "clob_token_yes": trade.get("clob_token_yes", "")}
+    price_ok = False
+    current_mid = None
+    exit_val = None
+    try:
+        prices = get_market_prices(market_stub)
+        current_mid = prices.get("mid")
+        if current_mid is not None:
+            price_ok = True
+            db.record_price(trade["market_id"], current_mid)
+            if direction == "YES":
+                exit_val = prices["bid"] if prices["bid"] is not None else current_mid
+            else:
+                ask = prices["ask"]
+                exit_val = (1.0 - ask) if ask is not None else (1.0 - current_mid)
+    except Exception as e:
+        logger.warning("close: price fetch failed for %s: %s", trade_id[:8], e)
+
+    reason = "MANUAL-CLOSE (user requested)"
+
+    if db.get_mode() == "live":
+        # Real sell. 'edge_reversed' kind = no closing-soon liquidity gate + one
+        # deeper repost if unfilled, then hold (F5/F6: never sell at a fictional
+        # price; if the book won't take it, the position holds to resolution).
+        closed = _live_exit_scan(trade, reason, "edge_reversed", exit_val, price_ok,
+                                 current_mid, dry_run)
+        if not closed and not dry_run:
+            print(f"  {Y}Live close did not fully fill — see status above "
+                  f"(may be held to resolution).{RST}")
+        return
+
+    # PAPER: resolve at the current exit value (fallback to entry if no price).
+    if exit_val is None:
+        exit_val = entry_price
+    shares = size / entry_price if entry_price else 0
+    pnl_est = shares * exit_val - size
+    tag = G if pnl_est >= 0 else R
+    print(f"  {tag}MANUAL-CLOSE {trade_id[:8]} | {city} {trade['target_date']} {direction} "
+          f"entry={entry_price:.3f} → {exit_val:.3f}  pnl={tag}${pnl_est:+.2f}{RST}")
+    if dry_run:
+        print(f"  {Y}[DRY RUN] would close{RST}")
+        return
+    outcome = "won" if pnl_est >= 0 else "lost"
+    db.resolve_trade(trade_id, None, outcome, exit_val, outcome_source="manual_close")
+    db.log_event("MANUAL_CLOSE", reason, city=city, icao=trade.get("icao", ""))
+    try:
+        from telegram import send_trade_event
+        send_trade_event(
+            "WIN" if outcome == "won" else "LOSS",
+            direction=direction, city=city, target_date=trade["target_date"],
+            entry_price=entry_price, bucket_lo=trade["bucket_lo"],
+            bucket_hi=trade["bucket_hi"], bucket_unit=trade["bucket_unit"],
+            edge=trade["edge"], stake=size, pnl=pnl_est,
+        )
+    except Exception:
+        pass
+
+
 # ── --resolve ─────────────────────────────────────────────────────────────────
 
 def cmd_resolve(dry_run=False):
@@ -1714,6 +1802,9 @@ def main():
     parser.add_argument("--reconcile",           action="store_true",
                         help="Live-only: finalize pending fills, cancel stale orders, "
                              "alert on DB↔chain divergence (no-op in paper)")
+    parser.add_argument("--close",              metavar="TRADE_ID", default=None,
+                        help="Manually close ONE open position at the current live price "
+                             "(paper: simulated fill; live: real CLOB sell)")
     parser.add_argument("--monitor",            action="store_true")
     parser.add_argument("--stats",              action="store_true")
     parser.add_argument("--positions",          action="store_true")
@@ -1816,6 +1907,19 @@ def main():
         except Exception as e:
             mark_job_end("exit-scan", False, started, str(e))
             raise
+        finally:
+            release_job_lock("exit-scan", lock_fd)
+    elif args.close:
+        # Share the exit-scan lock so a manual close can't race the daemon's
+        # exit-scan into a double-resolve of the same trade.
+        from ops_state import acquire_job_lock, release_job_lock
+        lock_fd, acquired, owner_pid = acquire_job_lock("exit-scan")
+        if not acquired:
+            print(f"{Y}Skip --close: exit-scan lock held by pid={owner_pid or '?'} "
+                  f"— retry in a moment.{RST}")
+            return
+        try:
+            cmd_close_trade(args.close, dry_run=args.dry_run)
         finally:
             release_job_lock("exit-scan", lock_fd)
     elif getattr(args, 'sync_positions', False):

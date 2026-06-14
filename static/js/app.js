@@ -7,6 +7,7 @@ const REFRESH_INTERVAL = 30000;
 const HISTORY_DEFAULT_LIMIT = 20;
 let _historyExpanded = false;
 let _historyCity = '';
+let _modalTrade = null;
 const HALF_HOUR_SYNC_INTERVAL = 30 * 60 * 1000;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -587,6 +588,18 @@ function renderOps(ops) {
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 function openModal(trade) {
+  _modalTrade = trade;
+  // Force-close is only valid for our OWN open positions (real trade_id).
+  // Resolved history rows and live Polymarket-UI rows (pm_row / synthetic
+  // "pm-" ids) are not closable.
+  const closeBtn = document.getElementById('m-close-pos');
+  if (closeBtn) {
+    const closable = trade.status === 'open' && trade.trade_id
+      && !trade.pm_row && !String(trade.trade_id).startsWith('pm-');
+    closeBtn.style.display = closable ? '' : 'none';
+    closeBtn.disabled = false;
+    closeBtn.textContent = 'Close position';
+  }
   const dir = trade.direction;
   // Live Polymarket rows (pm_row) repurpose model_prob→current price and
   // edge→cash PnL, so the direction-aware win%/edge framing is paper-only.
@@ -659,6 +672,56 @@ function openModal(trade) {
   } else {
     cl.innerHTML = 'No CLOB token available.';
   }
+}
+
+function _resetCloseBtn() {
+  const b = document.getElementById('m-close-pos');
+  if (b) { b.disabled = false; b.textContent = 'Close position'; }
+}
+
+function closePositionFromModal() {
+  const t = _modalTrade;
+  if (!t || !t.trade_id) return;
+  const cur = (t.current_price != null) ? '$' + t.current_price.toFixed(4) : 'the live price';
+  const pnl = (t.unreal_pnl != null)
+    ? (t.unreal_pnl >= 0 ? '+$' : '-$') + Math.abs(t.unreal_pnl).toFixed(2)
+    : 'unknown';
+  const where = (t.city || '') + ' ' + (t.target_date || '');
+  let msg = 'Close ' + where + ' ' + (t.direction || '') + '?\n\n'
+          + 'Entry $' + t.entry_price.toFixed(4) + ' → current ' + cur + '\n'
+          + 'Estimated P&L if closed now: ' + pnl + '\n\n';
+  if (_mode === 'live') {
+    msg = '⚠ LIVE — REAL MONEY ⚠\n\n'
+        + 'This submits a REAL sell order to Polymarket for real USDC.\n\n'
+        + msg + 'Proceed with the LIVE close?';
+  } else {
+    msg += 'This exits the position now at the live price (PAPER simulation).';
+  }
+  if (!confirm(msg)) return;
+  const btn = document.getElementById('m-close-pos');
+  if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
+  fetch('/api/close/' + encodeURIComponent(t.trade_id) + '?mode=' + _mode, { method: 'POST' })
+    .then(r => r.json())
+    .then(j => {
+      if (j.error) { showToast('Close failed: ' + j.error); _resetCloseBtn(); return; }
+      _pollCloseJob(j.job_id);
+    })
+    .catch(() => { showToast('Close request failed'); _resetCloseBtn(); });
+}
+
+function _pollCloseJob(jobId) {
+  fetch('/api/run/status/' + jobId).then(r => r.json()).then(j => {
+    if (j.status === 'running') { setTimeout(() => _pollCloseJob(jobId), 1500); return; }
+    _resetCloseBtn();
+    if (j.status === 'done') {
+      showToast('Close complete — refreshing positions.');
+      closeModal();
+      load(true);
+    } else {
+      showToast('Close error — position may still be open. Check daemon output.');
+      console.error('close output:', j.output);
+    }
+  }).catch(() => { _resetCloseBtn(); showToast('Could not check close status'); });
 }
 
 function renderChart(pts, entryYES) {

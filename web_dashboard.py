@@ -110,6 +110,41 @@ def run_cmd(cmd):
     return jsonify({"job_id": job_id})
 
 
+def _run_close_job(job_id: str, trade_id: str, mode: str = "paper"):
+    """Manually close ONE position via main.py --close; mirrors _run_job.
+    Note: invokes 'python3' (same as _run_job) — relies on the dashboard running
+    with the venv on PATH (true in tmux / venv-launched). The CLI validates that
+    the trade exists and is open, and routes paper vs live itself."""
+    try:
+        result = subprocess.run(
+            ["python3", "main.py", "--mode", mode, "--close", trade_id],
+            capture_output=True, text=True, timeout=180, cwd=_BOT_DIR,
+        )
+        output = (result.stdout + result.stderr).strip()
+        _jobs[job_id] = {
+            "status": "done" if result.returncode == 0 else "error",
+            "output": output[-4000:], "cmd": "close",
+        }
+        for k in [k for k in _api_cache if k.split(":")[0] == mode]:
+            _api_cache.pop(k, None)
+    except subprocess.TimeoutExpired:
+        _jobs[job_id] = {"status": "error", "output": "Close timed out.", "cmd": "close"}
+    except Exception as e:
+        _jobs[job_id] = {"status": "error", "output": str(e), "cmd": "close"}
+
+
+@app.route("/api/close/<trade_id>", methods=["POST"])
+def close_trade(trade_id):
+    if not trade_id or len(trade_id) < 6:
+        return jsonify({"error": "bad trade id"}), 400
+    mode = request.args.get("mode", "paper")
+    job_id = str(uuid.uuid4())[:8]
+    _jobs[job_id] = {"status": "running", "output": "", "cmd": "close"}
+    t = threading.Thread(target=_run_close_job, args=(job_id, trade_id, mode), daemon=True)
+    t.start()
+    return jsonify({"job_id": job_id})
+
+
 @app.route("/api/run/status/<job_id>")
 def job_status(job_id):
     return jsonify(_jobs.get(job_id, {"status": "unknown", "output": ""}))
@@ -334,6 +369,28 @@ def _build_polymarket_live_dashboard(db_path: str, days: int | None = None) -> d
             "avg_bias": avg_b,
         })
 
+    # Open positions shown in the live view come from OUR live_trades.db (real
+    # trade_ids → the modal "Close position" button works and routes through
+    # --close → live_broker). The Polymarket API above still drives cash, closed
+    # history and the account-level P&L header. db mode is "live" (set above).
+    our_open = _enrich_trades(db.get_open_trades(), db_path)
+    _lp = db.get_latest_prices_for_markets(
+        [t["market_id"] for t in our_open if t.get("market_id")])
+    for t in our_open:
+        info = _lp.get(t.get("market_id", ""))
+        if info:
+            yes_mid, scanned_at = info
+            cur = yes_mid if t["direction"] == "YES" else (1.0 - yes_mid)
+            shares = t["size_usdc"] / t["entry_price"] if t["entry_price"] else 0
+            t["current_price"] = round(cur, 4)
+            t["unreal_pnl"] = round(shares * cur - t["size_usdc"], 2)
+            t["price_age"] = scanned_at
+        else:
+            t["current_price"] = None
+            t["unreal_pnl"] = None
+            t["price_age"] = None
+    pnl["n_open"] = len(our_open)
+
     from ops_state import get_ops_snapshot
     return {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -342,12 +399,12 @@ def _build_polymarket_live_dashboard(db_path: str, days: int | None = None) -> d
         "live_pm_ui": True,
         "data_source": "polymarket",
         "range_days": days,
-        "open_count": len(rows_open),
+        "open_count": len(our_open),
         "history_count": len(rows_closed),
         "pnl": pnl,
         "cal": _CAL_PLACEHOLDER,
         "sharpe": None,
-        "positions": rows_open,
+        "positions": our_open,
         "history": rows_closed,
         "stations": stations,
         "ops": get_ops_snapshot(),
